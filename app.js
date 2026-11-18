@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.1';
+  const VERSION = '1.2';
 
   // ---------- stato ----------
   let S = load();
@@ -426,6 +426,7 @@
     if (view === 'workout' && s) { app.innerHTML = renderWorkout(s); keepAwake(true); if (s.rest) ensureTick(); scrollChip(); return; }
     keepAwake(false);
     if (view === 'summary' && summary) { app.innerHTML = renderSummary(); return; }
+    if (view === 'edit' && draft) { app.innerHTML = renderEdit(); return; }
     view = 'tabs';
     const tab = S.ui.tab;
     const body = tab === 'oggi' ? renderOggi() : tab === 'programmi' ? renderProgrammi() : tab === 'progressi' ? renderProgressi() : renderImpostazioni();
@@ -489,7 +490,7 @@
     const last = doneSessions().filter(s => s.src !== 'excel').slice(-1)[0];
     if (last) {
       const day = dayOf(last.week, last.day);
-      h += `<div class="section"><span class="label">Ultimo allenamento</span><div class="state done"><span class="dot" style="background:${day.color}"></span><span class="grow">${esc(day.name)} · sett. ${last.week}</span><span class="xs">${new Date(last.endedAt).toLocaleDateString('it-IT')}</span>${ICON.check}</div></div>`;
+      h += `<div class="section"><span class="label">Ultimo allenamento</span><button class="state done" data-act="editsess" data-v="${esc(last.id)}" style="width:100%;text-align:left"><span class="dot" style="background:${day.color}"></span><span class="grow">${esc(day.name)} · sett. ${last.week}</span><span class="xs">${new Date(last.endedAt).toLocaleDateString('it-IT')} · modifica</span>${ICON.check}</button></div>`;
     }
     return h + '</div>';
   }
@@ -539,8 +540,41 @@
     });
     const act = activeSession();
     if (!done) h += act ? `<button class="btn" data-act="resume">Riprendi l'allenamento in corso</button>` : `<button class="btn" data-act="start" data-w="${w}" data-d="${d}">Inizia questo allenamento</button>`;
+    else h += `<button class="btn" data-act="editsess" data-v="${esc(done.id)}">Modifica questo allenamento</button>`;
     sheet(h);
   }
+
+  // ---------- MODIFICA DI UN ALLENAMENTO PASSATO ----------
+  let draft = null;
+  function openEdit(id) {
+    const s = S.sessions.find(x => x.id === id); if (!s) return;
+    draft = { id, entries: JSON.parse(JSON.stringify(s.entries)) };
+    closeSheet(); view = 'edit'; render(); window.scrollTo({ top: 0 });
+  }
+  function renderEdit() {
+    const s = S.sessions.find(x => x.id === draft.id);
+    const day = dayOf(s.week, s.day);
+    document.documentElement.style.setProperty('--day', day.color);
+    const num = 'style="width:100%;height:44px;background:var(--bg);color:#fff;border:1px solid var(--dash);border-radius:10px;padding:0 10px;font-size:17px;font-family:var(--cond);font-weight:700"';
+    let h = `<header class="wo-head"><div class="wo-top"><button class="end" data-act="editcancel">Annulla</button><span>MODIFICA · ${esc(day.name.toUpperCase())} · SETT. ${s.week}</span><button class="end" data-act="editsave" style="background:#fff;color:var(--bg)">Salva</button></div></header><main class="wo-body">`;
+    day.slots.forEach((sl, si) => {
+      const en = draft.entries[si];
+      const ex = (en && en.sub) || sl.ex;
+      h += `<div class="card" style="margin-bottom:10px"><div style="font-weight:700">${sl.group ? sl.group + ' · ' : ''}${esc(exName(ex))}</div><div class="xs sub" style="margin:2px 0 10px">${esc(sl.range)} rip · ${isAssisted(ex) ? 'kg = assistenza' : 'kg'}</div>
+        <div style="display:grid;grid-template-columns:44px 1fr 1fr 1fr 44px;gap:6px;align-items:center" class="xs sub"><span></span><span>Kg</span><span>Rip</span><span>RIR</span><span></span></div>`;
+      (en ? en.sets : []).forEach((x, i) => {
+        h += `<div style="display:grid;grid-template-columns:44px 1fr 1fr 1fr 44px;gap:6px;align-items:center;margin-top:6px"><span class="small sub">S${i + 1}</span>
+          <input ${num} inputmode="decimal" aria-label="Kg serie ${i + 1}" data-edit="w" data-si="${si}" data-i="${i}" value="${x.w == null ? '' : fmt(x.w)}">
+          <input ${num} inputmode="numeric" aria-label="Ripetizioni serie ${i + 1}" data-edit="r" data-si="${si}" data-i="${i}" value="${x.r ?? ''}">
+          <input ${num} inputmode="numeric" aria-label="RIR serie ${i + 1}" data-edit="rir" data-si="${si}" data-i="${i}" value="${x.rir ?? ''}">
+          <button class="iconbtn" style="background:var(--dim)" data-act="editdel" data-si="${si}" data-i="${i}" aria-label="Elimina serie ${i + 1}">✕</button></div>`;
+      });
+      h += `<button class="btn ghost" style="margin-top:10px;height:44px" data-act="editadd" data-si="${si}">+ Aggiungi serie</button></div>`;
+    });
+    h += `<button class="btn danger" data-act="editdelsess" style="margin-top:6px">Elimina questo allenamento</button><div class="xs sub" style="margin-top:8px;text-align:center">Eliminandolo, il giorno torna "da fare" nel programma.</div></main>`;
+    return h;
+  }
+  function numOrNull(v) { v = String(v).trim().replace(',', '.'); if (v === '') return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
 
   // ---------- PROGRESSI ----------
   function renderProgressi() {
@@ -693,7 +727,7 @@
       h += `<div class="restbar"><div class="fill" id="rest-fill" style="width:${Math.max(0, 100 * left / s.rest.total)}%"></div><div class="in"><span class="xs sub" style="font-weight:600">RECUPERO</span><span class="num time" id="rest-time">${mmss(left)}</span>
         <button data-act="rest" data-v="-15" aria-label="Togli 15 secondi">−15</button><button data-act="rest" data-v="15" aria-label="Aggiungi 15 secondi">+15</button><button data-act="skiprest" aria-label="Salta il recupero" style="width:44px">✕</button></div></div>`;
     } else {
-      h += `<div class="restbar idle"><div class="in"><button data-act="list">${ICON.list}&nbsp; Esercizi di oggi</button><button data-act="sessnote">Nota di oggi</button></div></div>`;
+      h += `<div class="restbar idle"><div class="in"><button data-act="list">${ICON.list}&nbsp; Esercizi</button><button data-act="restart" aria-label="Avvia il recupero">${ICON.stopwatch}&nbsp; Recupero</button><button data-act="sessnote">Nota</button></div></div>`;
     }
     return h;
   }
@@ -865,7 +899,31 @@
       }
       case 'warm': { const en = ensureEntry(s, s.cur); en.warmDone = !en.warmDone; save(); render(); break; }
       case 'rest': { if (s.rest) { s.rest.endAt += (+v) * 1000; s.rest.total = Math.max(s.rest.total + (+v), 1); save(); onTick(); } break; }
-      case 'skiprest': endRest(false); break;
+      case 'editsess': openEdit(v); break;
+      case 'editcancel': draft = null; view = 'tabs'; render(); break;
+      case 'editadd': {
+        const si = el.dataset.si; const en = draft.entries[si] || (draft.entries[si] = { sets: [], note: null });
+        const prev = en.sets[en.sets.length - 1];
+        en.sets.push({ w: prev ? prev.w : null, r: prev ? prev.r : null, rir: null, done: true });
+        render(); break;
+      }
+      case 'editdel': { const en = draft.entries[el.dataset.si]; en.sets.splice(+el.dataset.i, 1); render(); break; }
+      case 'editsave': {
+        const s = S.sessions.find(x => x.id === draft.id);
+        for (const k of Object.keys(draft.entries)) { const en = draft.entries[k]; en.sets = en.sets.filter(x => x.w != null || x.r != null); en.sets.forEach(x => { x.done = true; }); if (!en.sets.length && !en.note) delete draft.entries[k]; }
+        s.entries = draft.entries; s.edited = Date.now(); draft = null; save(); view = 'tabs'; render(); toast('Allenamento modificato'); break;
+      }
+      case 'editdelsess': {
+        if (!await ask('Eliminare questo allenamento?', 'Le serie registrate vengono cancellate e il giorno torna da fare. Non si può annullare.', 'Elimina', true)) return;
+        S.sessions = S.sessions.filter(x => x.id !== draft.id); draft = null; save(); view = 'tabs'; render(); toast('Allenamento eliminato'); break;
+      }
+      case 'skiprest': endRest(false); toast('Recupero fermato: lo riavvii dal tasto Recupero'); break;
+      case 'restart': {
+        const day = dayOf(s.week, s.day); const slot = day.slots[s.cur];
+        let sec = slot.rest;
+        if (!sec && slot.group) sec = Math.max(...s.seq.filter(m => day.slots[m].group === slot.group).map(m => day.slots[m].rest));
+        startRest(sec || 90, s.cur); unlockAudio(); save(); render(); break;
+      }
       case 'video': {
         const en = ensureEntry(s, s.cur); const slot = dayOf(s.week, s.day).slots[s.cur];
         let url = (CAT[slot.ex] || {}).video;
@@ -979,6 +1037,13 @@
     const a = el.dataset.act;
     if (sheetAct(a, el)) return;
     act(a, el, e);
+  });
+  document.addEventListener('input', e => {
+    const el = e.target;
+    if (!el.dataset.edit || !draft) return;
+    const x = draft.entries[el.dataset.si].sets[+el.dataset.i];
+    const n = numOrNull(el.value);
+    x[el.dataset.edit] = el.dataset.edit === 'w' ? n : (n == null ? null : Math.round(n));
   });
   document.addEventListener('change', e => {
     const el = e.target;
