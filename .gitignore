@@ -1,0 +1,7 @@
+# Dati privati: programma a pagamento e storico personale. Non vanno mai online.
+data.js
+*.json
+!manifest.webmanifest
+private/
+tools/raw.json
+tools/
