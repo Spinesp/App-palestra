@@ -14,6 +14,22 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/barlow-condensed-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
+<script>
+  // altezza reale dello schermo per l'app installata sulla Home (non cambia durante l'avvio)
+  (function () {
+    var sa = window.navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+    if (!sa) return;
+    var r = document.documentElement;
+    function set() { var h = Math.max(screen.width, screen.height); if (window.innerWidth > window.innerHeight) h = Math.min(screen.width, screen.height); r.style.setProperty('--app-h', h + 'px'); }
+    r.classList.add('standalone'); set();
+    // se a finestra stabile l'altezza reale è diversa (casi rari), ci si allinea a quella
+    var t = null;
+    function settle() { clearTimeout(t); t = setTimeout(function () { r.style.setProperty('--app-h', window.innerHeight + 'px'); }, 1500); }
+    window.addEventListener('load', settle);
+    window.addEventListener('resize', settle);
+    window.addEventListener('orientationchange', function () { setTimeout(set, 300); settle(); });
+  })();
+</script>
 </head>
 <body>
 <div id="app"></div>

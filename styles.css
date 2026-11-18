@@ -157,3 +157,8 @@ button.note{text-align:left;color:inherit}
 .setting{display:flex;align-items:center;gap:12px;min-height:56px;border-bottom:1px solid var(--line)}
 .setting:last-child{border-bottom:none}
 .chart{width:100%;height:auto;display:block}
+
+/* iOS 26, app sulla Home: all'avvio la finestra viene misurata più corta per un istante e le barre in basso "saltano".
+   Ancoriamo le barre all'altezza fissa dello schermo (misurata una volta all'avvio) invece che al fondo della finestra. */
+html.standalone .tabbar{bottom:auto;top:calc(var(--app-h) - 62px - var(--safe-bottom));height:calc(62px + var(--safe-bottom))}
+html.standalone .restbar{bottom:auto;top:calc(var(--app-h) - 74px - var(--safe-bottom))}
