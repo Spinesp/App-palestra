@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.2.3';
+  const VERSION = '1.3';
 
   // ---------- stato ----------
   let S = load();
@@ -79,7 +79,7 @@
         const slot = day.slots[+si];
         if (!slot || keyOf(slot, en.sub) !== key) continue;
         const sets = (en.sets || []).filter(x => x.done && x.r != null);
-        if (sets.length) out.push({ s, sets, ex: en.sub || slot.ex, note: en.note || en.sessNote || null });
+        if (sets.length) out.push({ s, si: +si, sets, ex: en.sub || slot.ex, note: en.note || en.sessNote || null });
       }
     }
     return out;
@@ -619,6 +619,7 @@
         <div class="xs sub">Backup automatico su Google Drive: in arrivo in una prossima versione.</div>
       </div></div>
       <div class="section"><span class="label">Attenzione</span><button class="btn danger" data-act="reset">Azzera tutto e riparti dai dati dell'Excel</button></div>
+      <div class="section"><button class="btn ghost" data-act="update">Cerca aggiornamenti</button></div>
       <div class="section xs sub" style="text-align:center">App Palestra · versione ${VERSION}</div></div>`;
   }
   function download(name, text, type) {
@@ -678,11 +679,16 @@
     const m = meta(ex);
     const list = perfs(key);
     const lastP = list[list.length - 1];
+    // note: tutte modificabili con un tocco; se vuote diventano una riga sottile
+    const techTxt = (m.techNote != null) ? m.techNote : (cat.note || '');
+    const noteRow = (kind, icon, label, color, txt, empty) => txt
+      ? `<button class="note" data-act="note" data-v="${kind}">${icon}<div><div class="t" style="color:${color}">${label}</div><div class="b">${esc(txt)}</div></div></button>`
+      : `<button class="note empty" data-act="note" data-v="${kind}">${icon}<span class="t" style="color:${color}">${label}</span><span class="add">${empty}</span></button>`;
     h += `<div class="notes">`;
-    if (cat.note) h += `<div class="note">${ICON.info}<div><div class="t" style="color:var(--cyan)">TECNICA (DAL PROGRAMMA)</div><div class="b">${esc(cat.note)}</div></div></div>`;
-    h += `<button class="note" data-act="mynote" style="width:100%">${ICON.pin}<div><div class="t" style="color:var(--gold)">LA TUA NOTA</div><div class="b">${m.myNote ? esc(m.myNote) : '<span class="muted">Tocca per aggiungere (sedile, impugnatura…)</span>'}</div></div></button>`;
-    if (lastP && lastP.note) h += `<div class="note">${ICON.clock}<div><div class="t" style="color:var(--sub)">NOTA DELL'ULTIMA VOLTA</div><div class="b">${esc(lastP.note)}</div></div></div>`;
-    if (en.sessNote) h += `<div class="note">${ICON.clock}<div><div class="t" style="color:#fff">NOTA DI OGGI</div><div class="b">${esc(en.sessNote)}</div></div></div>`;
+    h += noteRow('tech', ICON.info, 'TECNICA' + (m.techNote != null ? '' : ' (DAL PROGRAMMA)'), 'var(--cyan)', techTxt, '+ aggiungi');
+    h += noteRow('my', ICON.pin, 'LA TUA NOTA', 'var(--gold)', m.myNote, '+ sedile, impugnatura…');
+    if (lastP) h += noteRow('last', ICON.clock, 'NOTA DELL\'ULTIMA VOLTA', 'var(--sub)', lastP.note, '+ aggiungi');
+    h += noteRow('sess', ICON.clock, 'NOTA DI OGGI', '#fff', en.sessNote, '+ aggiungi');
     h += `</div>`;
 
     // ultima / record per la serie attuale
@@ -698,7 +704,7 @@
     const firstW = (en.sets.find(x => !x.done) || en.sets[0] || {}).w;
     const wu = warmups(slot, firstW);
     const wuTxt = wu.length ? wu.map(x => wtxt(x.w) + ' × ' + x.r).join(' · ')
-      : (slot.warmup && slot.warmup !== '0' ? slot.warmup + (slot.warmup === '1' ? ' serie leggera' : ' serie leggere') + (isAssisted(ex) ? ' (più assistenza)' : '') : '');
+      : (slot.warmup && slot.warmup !== '0' ? '<span style="font-size:17px">' + slot.warmup + (slot.warmup === '1' ? ' serie leggera' : ' serie leggere') + (isAssisted(ex) ? ' (più assistenza)' : '') + '</span>' : '');
     if (wuTxt) {
       h += `<button class="setrow ${en.warmDone ? 'done' : 'todo'}" data-act="warm"><span class="lbl">Risc.${String(slot.warmup).startsWith('0-') ? '<br><span class="xs">facolt.</span>' : ''}</span><span class="num">${wuTxt}</span>${en.warmDone ? ICON.check : '<span class="xs">tocca a fine riscaldamento</span>'}</button>`;
     }
@@ -859,6 +865,15 @@
       case 'setting': S.settings[v] = !S.settings[v]; save(); render(); if (v === 'sound' && S.settings.sound) { unlockAudio(); beep(880, 0.15); } break;
       case 'export': download('app-palestra-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify({ app: 'app-palestra', version: VERSION, savedAt: new Date().toISOString(), state: S }), 'application/json'); break;
       case 'csv': exportCSV(); break;
+      case 'update': {
+        toast('Scarico l\'ultima versione…');
+        try {
+          if ('serviceWorker' in navigator) { const regs = await navigator.serviceWorker.getRegistrations(); for (const r of regs) await r.update(); }
+          if (window.caches) { const keys = await caches.keys(); for (const k of keys) await caches.delete(k); }
+          await Promise.all(['./', 'index.html', 'app.js', 'styles.css', 'sw.js'].map(u => fetch(u, { cache: 'reload' }).catch(() => {})));
+        } catch (err) { /* si ricarica comunque */ }
+        location.reload(); break;
+      }
       case 'bw': { const n = await promptNum('Peso corporeo in kg', S.settings.bw); if (n) { S.settings.bw = n; save(); render(); } break; }
       case 'reset':
         if (await ask('Azzerare tutto?', 'Cancello tutti i dati registrati nell\'app e riparto dallo storico dell\'Excel. Prima conviene esportare un backup.', 'Azzera tutto', true)) { S = freshState({ program: S.program, catalog: S.catalog, history: S.sessions.filter(x => x.src === 'excel') }); bindData(); save(); render(); toast('Dati azzerati'); }
@@ -936,6 +951,7 @@
       case 'subs': subsSheet(); break;
       case 'exmenu': exMenu(); break;
       case 'mynote': noteSheet('my'); break;
+      case 'note': noteSheet(v); break;
       case 'sessnote': noteSheet('sess'); break;
       // tecniche
       case 'tw': case 'tr': {
@@ -989,11 +1005,31 @@
       <button class="opt" data-act="tolast">Fallo per ultimo (macchina occupata)</button>
       <button class="opt" data-act="refill">Ricalcola i suggerimenti per le serie da fare</button>`);
   }
-  function noteSheet(kind) {
+  const NOTE_INFO = {
+    tech: ['Tecnica dell\'esercizio', 'Le indicazioni del programma, che puoi riscrivere a modo tuo.'],
+    my: ['La tua nota fissa', 'Compare ogni volta che fai questo esercizio (sedile, impugnatura, regolazioni…).'],
+    last: ['Nota dell\'ultima volta', 'La nota dell\'allenamento precedente di questo esercizio.'],
+    sess: ['Nota di oggi', 'Resta solo in questo allenamento (es. "oggi stanco", "scalda bene il ginocchio").'],
+  };
+  function noteTarget(kind) {
     const s = activeSession(); const slot = dayOf(s.week, s.day).slots[s.cur]; const en = ensureEntry(s, s.cur); const ex = en.sub || slot.ex;
-    const val = kind === 'my' ? (meta(ex).myNote || '') : (en.sessNote || '');
-    sheet(`<h3>${kind === 'my' ? 'La tua nota fissa' : 'Nota di oggi'}</h3><div class="small sub" style="margin:-6px 0 12px">${kind === 'my' ? 'Compare ogni volta che fai questo esercizio (sedile, impugnatura, regolazioni…).' : 'Resta solo in questo allenamento (es. "oggi stanco", "scalda bene il ginocchio").'}</div>
-      <textarea id="note-ta">${esc(val)}</textarea><div style="height:10px"></div><button class="btn" data-act="notesave" data-v="${kind}">Salva</button>`, sc => { const t = $('#note-ta', sc); t.focus(); });
+    const m = meta(ex); const cat = CAT[ex] || {};
+    if (kind === 'tech') return { get: () => (m.techNote != null ? m.techNote : (cat.note || '')), set: t => { m.techNote = (t === (cat.note || '')) ? null : t; }, reset: m.techNote != null && cat.note ? () => { m.techNote = null; } : null };
+    if (kind === 'my') return { get: () => m.myNote || '', set: t => { m.myNote = t || null; } };
+    if (kind === 'last') {
+      const list = perfs(keyOf(slot, en.sub)); const p = list[list.length - 1];
+      const e2 = p && p.s.entries[p.si];
+      return { get: () => (e2 ? (e2.note || e2.sessNote || '') : ''), set: t => { if (e2) { e2.note = t || null; e2.sessNote = ''; } } };
+    }
+    return { get: () => en.sessNote || '', set: t => { en.sessNote = t; } };
+  }
+  function noteSheet(kind) {
+    const [title, help] = NOTE_INFO[kind] || NOTE_INFO.sess;
+    const tg = noteTarget(kind);
+    sheet(`<h3>${title}</h3><div class="small sub" style="margin:-6px 0 12px">${help}</div>
+      <textarea id="note-ta">${esc(tg.get())}</textarea><div style="height:10px"></div><button class="btn" data-act="notesave" data-v="${kind}">Salva</button>
+      ${tg.reset ? '<div style="height:8px"></div><button class="btn ghost" data-act="notereset" data-v="tech">Ripristina il testo del programma</button>' : ''}`,
+      sc => { const t = $('#note-ta', sc); t.focus(); });
   }
   function sheetAct(a, el) {
     if (a === 'ask-ok') { resolvePending(true); return true; }
@@ -1024,10 +1060,10 @@
       case 'tolast': { const o = s.seq; o.splice(o.indexOf(s.cur), 1); o.push(s.cur); const n = nextIncomplete(s, o[o.length - 1]); closeSheet(); if (n != null && n !== s.cur) goSlot(n); else { save(); render(); } toast('Spostato in fondo'); return true; }
       case 'refill': { const keep = en.sets.filter(x => x.done); fillSets(s, s.cur, en); keep.forEach((x, i) => { en.sets[i] = x; }); closeSheet(); save(); render(); return true; }
       case 'notesave': {
-        const t = $('#note-ta').value.trim();
-        if (el.dataset.v === 'my') meta(ex).myNote = t || null; else en.sessNote = t;
+        noteTarget(el.dataset.v).set($('#note-ta').value.trim());
         closeSheet(); save(); render(); return true;
       }
+      case 'notereset': { const tg = noteTarget('tech'); if (tg.reset) tg.reset(); closeSheet(); save(); render(); return true; }
     }
     return false;
   }

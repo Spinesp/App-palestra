@@ -162,3 +162,10 @@ button.note{text-align:left;color:inherit}
    Ancoriamo le barre all'altezza fissa dello schermo (misurata una volta all'avvio) invece che al fondo della finestra. */
 html.standalone .tabbar{bottom:auto;top:calc(var(--app-h) - 62px - var(--safe-bottom));height:calc(62px + var(--safe-bottom))}
 html.standalone .restbar{bottom:auto;top:calc(var(--app-h) - 74px - var(--safe-bottom))}
+
+/* nota vuota: riga sottile ma sempre toccabile */
+button.note{width:100%;text-align:left;color:inherit}
+.note.empty{align-items:center;min-height:30px;gap:8px}
+.note.empty svg{margin-top:0;opacity:.8}
+.note.empty .t{font-size:11px;opacity:.85}
+.note.empty .add{margin-left:auto;font-size:12px;color:var(--muted)}
