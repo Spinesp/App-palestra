@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.3';
+  const VERSION = '1.3.1';
 
   // ---------- stato ----------
   let S = load();
@@ -387,10 +387,17 @@
   let view = 'tabs'; // 'tabs' | 'workout' | 'summary'
   let summary = null;
   function openWorkout() { view = 'workout'; render(); window.scrollTo({ top: 0 }); }
-  function toast(msg) {
+  function toast(msg, actLabel, fn) {
     const old = $('.toast'); if (old) old.remove();
-    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2200);
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    if (actLabel) {
+      const b = document.createElement('button'); b.textContent = actLabel;
+      b.style.cssText = 'margin-left:12px;font-weight:800;color:#2F6BFF;text-decoration:underline;min-height:32px';
+      b.addEventListener('click', ev => { ev.stopPropagation(); t.remove(); fn(); });
+      t.appendChild(b); t.style.pointerEvents = 'auto';
+    }
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), actLabel ? 6000 : 2200);
   }
   function sheet(html, onMount) {
     closeSheet();
@@ -1019,7 +1026,9 @@
     if (kind === 'last') {
       const list = perfs(keyOf(slot, en.sub)); const p = list[list.length - 1];
       const e2 = p && p.s.entries[p.si];
-      return { get: () => (e2 ? (e2.note || e2.sessNote || '') : ''), set: t => { if (e2) { e2.note = t || null; e2.sessNote = ''; } } };
+      return { get: () => (e2 ? (e2.note || e2.sessNote || '') : ''),
+        set: t => { if (!e2) return; if (e2.noteOrig === undefined) e2.noteOrig = e2.note || e2.sessNote || ''; e2.note = t || null; e2.sessNote = ''; },
+        reset: e2 && e2.noteOrig !== undefined && e2.noteOrig !== (e2.note || '') ? () => { e2.note = e2.noteOrig || null; } : null };
     }
     return { get: () => en.sessNote || '', set: t => { en.sessNote = t; } };
   }
@@ -1028,7 +1037,7 @@
     const tg = noteTarget(kind);
     sheet(`<h3>${title}</h3><div class="small sub" style="margin:-6px 0 12px">${help}</div>
       <textarea id="note-ta">${esc(tg.get())}</textarea><div style="height:10px"></div><button class="btn" data-act="notesave" data-v="${kind}">Salva</button>
-      ${tg.reset ? '<div style="height:8px"></div><button class="btn ghost" data-act="notereset" data-v="tech">Ripristina il testo del programma</button>' : ''}`,
+      ${tg.reset ? `<div style="height:8px"></div><button class="btn ghost" data-act="notereset" data-v="${kind}">${kind === 'tech' ? 'Ripristina il testo del programma' : 'Ripristina la nota originale'}</button>` : ''}`,
       sc => { const t = $('#note-ta', sc); t.focus(); });
   }
   function sheetAct(a, el) {
@@ -1060,10 +1069,12 @@
       case 'tolast': { const o = s.seq; o.splice(o.indexOf(s.cur), 1); o.push(s.cur); const n = nextIncomplete(s, o[o.length - 1]); closeSheet(); if (n != null && n !== s.cur) goSlot(n); else { save(); render(); } toast('Spostato in fondo'); return true; }
       case 'refill': { const keep = en.sets.filter(x => x.done); fillSets(s, s.cur, en); keep.forEach((x, i) => { en.sets[i] = x; }); closeSheet(); save(); render(); return true; }
       case 'notesave': {
-        noteTarget(el.dataset.v).set($('#note-ta').value.trim());
-        closeSheet(); save(); render(); return true;
+        const kind = el.dataset.v; const tg = noteTarget(kind); const before = tg.get(); const after = $('#note-ta').value.trim();
+        tg.set(after); closeSheet(); save(); render();
+        if (before && !after) toast('Nota cancellata', 'Annulla', () => { noteTarget(kind).set(before); save(); render(); });
+        return true;
       }
-      case 'notereset': { const tg = noteTarget('tech'); if (tg.reset) tg.reset(); closeSheet(); save(); render(); return true; }
+      case 'notereset': { const tg = noteTarget(el.dataset.v); if (tg.reset) tg.reset(); closeSheet(); save(); render(); return true; }
     }
     return false;
   }
