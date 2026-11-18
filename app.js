@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.2';
+  const VERSION = '1.2.1';
 
   // ---------- stato ----------
   let S = load();
@@ -697,8 +697,10 @@
     h += `<div class="sets">`;
     const firstW = (en.sets.find(x => !x.done) || en.sets[0] || {}).w;
     const wu = warmups(slot, firstW);
-    if (wu.length) {
-      h += `<button class="setrow ${en.warmDone ? 'done' : 'todo'}" data-act="warm"><span class="lbl">Risc.</span><span class="num">${wu.map(x => wtxt(x.w) + ' × ' + x.r).join(' · ')}</span>${en.warmDone ? ICON.check : '<span class="xs">tocca a fine riscaldamento</span>'}</button>`;
+    const wuTxt = wu.length ? wu.map(x => wtxt(x.w) + ' × ' + x.r).join(' · ')
+      : (slot.warmup && slot.warmup !== '0' ? slot.warmup + (slot.warmup === '1' ? ' serie leggera' : ' serie leggere') + (isAssisted(ex) ? ' (più assistenza)' : '') : '');
+    if (wuTxt) {
+      h += `<button class="setrow ${en.warmDone ? 'done' : 'todo'}" data-act="warm"><span class="lbl">Risc.${String(slot.warmup).startsWith('0-') ? '<br><span class="xs">facolt.</span>' : ''}</span><span class="num">${wuTxt}</span>${en.warmDone ? ICON.check : '<span class="xs">tocca a fine riscaldamento</span>'}</button>`;
     }
     const nowIdx = en.sets.findIndex(x => !x.done);
     en.sets.forEach((x, i) => {
