@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.0';
+  const VERSION = '1.1';
 
   // ---------- stato ----------
   let S = load();
@@ -51,6 +51,7 @@
   const dayOf = (w, d) => P.weeks[w - 1].days[d];
   const keyOf = (slot, sub) => (sub || slot.ex) + '|' + slot.range;
   const mmss = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const clockTxt = ms => { const t = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0'); };
   const restTxt = s => s >= 60 ? (s % 60 ? (s / 60).toString().replace('.', ',') : s / 60) + ' min' : s + ' s';
   const TECH = { drop: 'Due drop set (~25% ciascuno)', myo: 'Myo-reps', hold: 'Tenuta statica con carico (30 s)' };
   const ICON = {
@@ -61,6 +62,7 @@
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="#3DE0E6" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>',
     pin: '<svg viewBox="0 0 24 24" fill="none" stroke="#FFC94D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5M9 3h6l-1 7 4 3H6l4-3z"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="#A9B4C8" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    stopwatch: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M10 2h4M12 2v3"/></svg>',
     list: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',
   };
 
@@ -477,7 +479,7 @@
           <div class="small" style="font-weight:600;text-align:right">${exs.length} esercizi<br>~${estMinutes(day)} min</div></div>
         <div style="padding:12px 16px 14px;display:flex;flex-direction:column;gap:10px">
           <div class="small" style="color:var(--soft);line-height:1.45">${exs.map(esc).join(' · ')}</div>
-          <button class="btn" data-act="${act ? 'resume' : 'start'}" data-w="${target.w}" data-d="${target.d}">${act ? 'Riprendi' : 'Inizia'}</button>
+          <button class="btn" data-act="${act ? 'resume' : 'start'}" data-w="${target.w}" data-d="${target.d}">${act ? 'Riprendi · in corso da ' + clockTxt(Date.now() - act.startedAt) : 'Inizia'}</button>
         </div></div>`;
     } else {
       h += `<div class="card">Programma completato. Complimenti!</div>`;
@@ -618,8 +620,7 @@
     const ex = en.sub || slot.ex;
     const key = keyOf(slot, en.sub);
     const pos = s.seq.indexOf(si) + 1;
-    const elapsed = Math.floor((Date.now() - s.startedAt) / 60000);
-    let h = `<header class="wo-head"><div class="wo-top"><span class="row"><button class="end" data-act="leave" aria-label="Torna a Oggi" style="width:34px;padding:0;font-size:20px">‹</button>SETT. ${s.week} · ${esc(day.name.toUpperCase())}${P.weeks[s.week - 1].deload ? ' · SCARICO' : ''}</span><span class="row"><span>${pos} / ${s.seq.length} · ${elapsed} min</span><button class="end" data-act="finish">Termina</button></span></div>
+    let h = `<header class="wo-head"><div class="wo-top"><span class="row"><button class="end" data-act="leave" aria-label="Torna a Oggi" style="width:34px;padding:0;font-size:20px">‹</button>SETT. ${s.week} · ${esc(day.name.toUpperCase())}${P.weeks[s.week - 1].deload ? ' · SCARICO' : ''}</span><span class="row"><span>${pos}/${s.seq.length}</span><span class="clock" aria-label="Durata dell'allenamento">${ICON.stopwatch}<span id="wo-clock" class="num">${clockTxt(Date.now() - s.startedAt)}</span></span><button class="end" data-act="finish">Termina</button></span></div>
       <nav class="chips" aria-label="Esercizi di oggi">${s.seq.map((x, k) => {
         const sl = day.slots[x];
         const st = slotComplete(s, x) ? 'done' : x === si ? 'now' : 'todo';
@@ -788,13 +789,13 @@
     let records = 0, sets = 0;
     for (const si of Object.keys(s.entries)) { checkRecord(s, +si); if (s.entries[si].recordNew) records++; sets += slotDoneCount(s.entries[si]); }
     s.status = 'done'; s.endedAt = Date.now(); s.rest = null; s.records = records; s.order = ++S.orderSeq;
-    summary = { day: day.name, color: day.color, week: s.week, min: Math.round((s.endedAt - s.startedAt) / 60000), sets, records, recs: Object.entries(s.entries).filter(([, en]) => en.recordNew).map(([si, en]) => ({ ex: exName(en.sub || day.slots[+si].ex), ...en.recordNew })) };
+    summary = { day: day.name, color: day.color, week: s.week, min: Math.round((s.endedAt - s.startedAt) / 60000), dur: clockTxt(s.endedAt - s.startedAt), sets, records, recs: Object.entries(s.entries).filter(([, en]) => en.recordNew).map(([si, en]) => ({ ex: exName(en.sub || day.slots[+si].ex), ...en.recordNew })) };
     save(); view = 'summary'; render(); window.scrollTo({ top: 0 });
   }
   function renderSummary() {
     const m = summary;
     return `<div class="page"><div style="background:${m.color};border-radius:26px;padding:22px 18px"><div class="xs" style="font-weight:700">ALLENAMENTO COMPLETATO</div><div class="cond" style="font-size:44px;margin-top:4px">${esc(m.day)} · sett. ${m.week}</div></div>
-      <div class="tiles" style="margin-top:12px"><div class="tile"><span class="xs sub">Durata</span><span class="num big" style="font-weight:800">${m.min}′</span></div><div class="tile"><span class="xs sub">Serie</span><span class="num big" style="font-weight:800">${m.sets}</span></div><div class="tile"><span class="xs sub">Record</span><span class="num big" style="font-weight:800;color:var(--gold)">${m.records}</span></div></div>
+      <div class="tiles" style="margin-top:12px"><div class="tile"><span class="xs sub">Durata</span><span class="num big" style="font-weight:800">${m.dur || m.min + '′'}</span></div><div class="tile"><span class="xs sub">Serie</span><span class="num big" style="font-weight:800">${m.sets}</span></div><div class="tile"><span class="xs sub">Record</span><span class="num big" style="font-weight:800;color:var(--gold)">${m.records}</span></div></div>
       ${m.recs.length ? `<div class="section"><span class="label">Record battuti</span>${m.recs.map(r => `<div class="state done" style="color:#fff;margin-bottom:8px"><span class="grow">${esc(r.ex)}</span><span class="num" style="font-size:20px"><span style="color:var(--gold)">●</span> ${r.txt || wtxt(r.w)} × ${r.r}</span></div>`).join('')}</div>` : ''}
       <div class="section"><button class="btn" data-act="home">Torna a Oggi</button></div></div>`;
   }
@@ -1004,7 +1005,8 @@
   if (S && activeSession()) view = 'workout';
   render();
   if (S && activeSession() && activeSession().rest) ensureTick();
-  setInterval(() => { if (S && view === 'workout' && activeSession() && !$('#scrim')) render(); }, 60000);
+  // cronometro dell'allenamento: aggiorna solo il numero, ogni secondo
+  setInterval(() => { const el = $('#wo-clock'); const s = S && activeSession(); if (el && s) el.textContent = clockTxt(Date.now() - s.startedAt); }, 1000);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

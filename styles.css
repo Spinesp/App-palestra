@@ -69,6 +69,8 @@ h1,h2,h3{margin:0}
 /* allenamento */
 .wo-head{background:var(--day);padding:calc(var(--safe-top) + 12px) 0 12px;border-radius:0 0 26px 26px;position:sticky;top:0;z-index:10}
 .wo-top{padding:0 16px;display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:600;gap:8px}
+.wo-top .clock{display:inline-flex;align-items:center;gap:5px;height:34px;border-radius:17px;background:rgba(0,0,0,.22);padding:0 12px}
+.wo-top .clock .num{font-size:20px;font-weight:800;min-width:44px;text-align:right}
 .wo-top .end{height:34px;border-radius:17px;background:rgba(0,0,0,.22);padding:0 14px;font-size:14px;font-weight:700}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:10px 16px 2px;scrollbar-width:none;scroll-snap-type:x proximity}
 .chips::-webkit-scrollbar{display:none}
