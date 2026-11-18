@@ -1,6 +1,6 @@
 // Service worker: l'app funziona anche senza rete in palestra.
 // Cambia CACHE a ogni nuova versione: alla riapertura l'iPhone scarica la versione nuova.
-const CACHE = 'palestra-v1.2.2';
+const CACHE = 'palestra-v1.2.3';
 const FILES = [
   './', './index.html', './styles.css', './app.js', './data.js', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
@@ -18,7 +18,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(e.request, { cache: 'no-cache' }).then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));
       return res;
