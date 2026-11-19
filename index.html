@@ -22,12 +22,8 @@
     var r = document.documentElement;
     function set() { var h = Math.max(screen.width, screen.height); if (window.innerWidth > window.innerHeight) h = Math.min(screen.width, screen.height); r.style.setProperty('--app-h', h + 'px'); }
     r.classList.add('standalone'); set();
-    // se a finestra stabile l'altezza reale è diversa (casi rari), ci si allinea a quella
-    var t = null;
-    function settle() { clearTimeout(t); t = setTimeout(function () { r.style.setProperty('--app-h', window.innerHeight + 'px'); }, 1500); }
-    window.addEventListener('load', settle);
-    window.addEventListener('resize', settle);
-    window.addEventListener('orientationchange', function () { setTimeout(set, 300); settle(); });
+    // NB: su iOS 26 per un po' la finestra risulta più corta (bug di Safari): non va mai usata come riferimento
+    window.addEventListener('orientationchange', function () { setTimeout(set, 300); });
   })();
 </script>
 </head>
