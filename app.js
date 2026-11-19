@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.4';
+  const VERSION = '1.5';
 
   // ---------- stato ----------
   let S = load();
@@ -73,7 +73,9 @@
   // prestazioni passate per una chiave esercizio|range (escluse quelle della sessione attiva)
   function perfs(key) {
     const out = [];
+    const since = (S.since || {})[key] || 0;
     for (const s of doneSessions()) {
+      if (s.order < since) continue;
       const day = dayOf(s.week, s.day);
       for (const [si, en] of Object.entries(s.entries)) {
         const slot = day.slots[+si];
@@ -657,8 +659,92 @@
   function numOrNull(v) { v = String(v).trim().replace(',', '.'); if (v === '') return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
 
   // ---------- PROGRESSI ----------
+  function allKeys() {
+    const keys = [];
+    P.weeks[0].days.forEach(d => !d.rest && d.slots.forEach(sl => { const k = keyOf(sl); if (!keys.find(x => x.k === k)) keys.push({ k, sl }); }));
+    // anche le varianti usate al posto degli originali
+    for (const s of doneSessions()) { const day = dayOf(s.week, s.day); for (const [si, en] of Object.entries(s.entries)) { const sl = day.slots[+si]; if (sl && en.sub) { const k = keyOf(sl, en.sub); if (!keys.find(x => x.k === k)) keys.push({ k, sl, sub: en.sub }); } } }
+    return keys;
+  }
+  function firstE(p) { return e1x(p.ex, p.sets[0].w, p.sets[0].r); }
+  function progressStats() {
+    const keys = allKeys();
+    let ch = [], records = 0;
+    const watch = [];
+    for (const { k, sl, sub } of keys) {
+      const list = perfs(k); if (!list.length) continue;
+      if (list.length >= 2) { const a = firstE(list[0]), b = firstE(list[list.length - 1]); if (a > 0) ch.push(b / a - 1); }
+      let best = 0, stall = 0;
+      list.forEach((p, i) => { const e = Math.max(...p.sets.map(x => e1x(p.ex, x.w, x.r))); if (i > 0 && e > best + 0.01) { records++; stall = 0; } else if (i > 0) stall++; best = Math.max(best, e); });
+      if (list.length >= 3) {
+        const v = list.slice(-3).map(firstE);
+        const down = v[2] < v[1] - 0.01 && v[1] < v[0] - 0.01;
+        const rising = v[2] > v[1] + 0.01 && v[1] > v[0] + 0.01;   // sta risalendo: non è fermo
+        if (down || (stall >= 2 && !rising)) watch.push({ k, sl, sub, list, down, stall });
+      }
+    }
+    watch.sort((a, b) => (b.down - a.down) || (b.stall - a.stall));
+    const vol = {}, sets = {}, recW = {};
+    for (const s of doneSessions()) { vol[s.week] = (vol[s.week] || 0) + sessionVolume(s); for (const en of Object.values(s.entries)) sets[s.week] = (sets[s.week] || 0) + (en.sets || []).filter(x => x.done).length; recW[s.week] = (recW[s.week] || 0) + (s.records || 0); }
+    const done = doneSessions().length;
+    const total = P.weeks.reduce((n, w) => n + w.days.filter(d => !d.rest).length, 0);
+    const nw = nextWorkout(); const act = activeSession();
+    const cur = act ? act.week : nw ? nw.w : P.weeks.length;
+    let streak = 0; for (let w = cur; w >= 1; w--) { if (vol[w] || sets[w]) streak++; else if (w !== cur) break; }
+    const full = w => P.weeks[w - 1] && P.weeks[w - 1].days.every((d, di) => d.rest || sessionFor(w, di));
+    let cmp = null; for (let w = cur; w >= 2; w--) { if (full(w) && full(w - 1) && vol[w - 1]) { cmp = { w, pct: Math.round(100 * (vol[w] / vol[w - 1] - 1)) }; break; } }
+    return { change: ch.length ? ch.reduce((a, b) => a + b, 0) / ch.length : null, nChange: ch.length, records, watch, vol, sets, done, total, cur, streak, cmp };
+  }
+  function tons(kg) { return kg >= 1000 ? (Math.round(kg / 100) / 10).toString().replace('.', ',') + 't' : Math.round(kg) + ''; }
+  function watchAdvice(w) {
+    const ex = w.sub || w.sl.ex;
+    if (w.down) return 'Due cali di fila: controlla sonno, alimentazione e recupero. Se succede su più esercizi insieme, valuta una settimana di scarico.';
+    if (isAssisted(ex)) return 'Tieni la prima serie così e cura la discesa lenta: il progresso arriva prima nelle serie con assistenza.';
+    const subs = ((CAT[w.sl.ex] || {}).subs || []).map(x => x.name);
+    return (w.sl.rest ? 'Recupera il tempo pieno (' + w.sl.restTxt + ') prima della prima serie e punta a una ripetizione in più.' : 'Punta a una ripetizione in più nella prima serie.') + (subs.length && !w.sub ? ' Se resta fermo ancora, prova una variante (es. ' + subs[0] + ').' : '');
+  }
   function renderProgressi() {
-    let h = `<div class="page"><h1 class="cond page-title">Progressi</h1><div class="section" style="margin-top:0"><span class="label">Record per esercizio</span><div style="display:flex;flex-direction:column;gap:8px">`;
+    const tab = S.ui.progTab || 'pano';
+    let h = `<div class="page"><h1 class="cond page-title">Progressi</h1>
+      <div role="tablist" class="seg" style="grid-template-columns:repeat(2,minmax(0,1fr))"><button role="tab" aria-selected="${tab === 'pano'}" data-act="progtab" data-v="pano">Panoramica</button><button role="tab" aria-selected="${tab === 'ex'}" data-act="progtab" data-v="ex">Esercizi</button></div>`;
+    h += tab === 'ex' ? renderEsercizi() : renderPanoramica();
+    return h + '</div>';
+  }
+  function renderPanoramica() {
+    const st = progressStats();
+    const maxV = Math.max(1, ...Object.values(st.vol));
+    let h = `<div class="card" style="margin-top:14px;display:flex;flex-direction:column;gap:12px">
+      <div><div class="label" style="letter-spacing:.5px">${esc(P.name)} · sett. ${st.cur} di ${P.weeks.length}</div><div class="small" style="color:var(--soft);margin-top:2px">Forza media dall'inizio del programma</div></div>
+      <div class="row" style="align-items:baseline;gap:10px"><span class="cond" style="font-size:64px;color:${st.change == null || st.change >= 0 ? 'var(--green)' : '#FF8A8A'}">${st.change == null ? '–' : (st.change >= 0 ? '+' : '−') + Math.abs(Math.round(st.change * 100)) + '%'}</span>
+        <span class="xs sub" style="line-height:1.4">${st.nChange ? 'su ' + st.nChange + ' esercizi<br>prima volta → ultima volta' : 'servono almeno due allenamenti'}</span></div>
+      <div class="tiles">
+        <div class="tile" style="background:var(--dim)"><span class="xs sub" style="font-weight:700">ALLENAMENTI</span><span class="num" style="font-size:24px;font-weight:800">${st.done} / ${st.total}</span></div>
+        <div class="tile" style="background:var(--dim)"><span class="xs sub" style="font-weight:700">RECORD</span><span class="num" style="font-size:24px;font-weight:800;color:var(--gold)">${st.records}</span></div>
+        <div class="tile" style="background:var(--dim)"><span class="xs sub" style="font-weight:700">COSTANZA</span><span class="num" style="font-size:24px;font-weight:800">${st.streak} sett.</span></div></div></div>`;
+    h += `<div class="card" style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
+      <div class="row" style="justify-content:space-between"><span class="label">Kg sollevati per settimana</span><span class="xs sub">S = scarico</span></div>
+      <div class="wbars" role="img" aria-label="Kg sollevati per settimana">${P.weeks.map(wk => {
+        const v = st.vol[wk.week] || 0;
+        if (!v) return `<div class="wb"><div class="bar ${wk.deload ? 'deload' : 'empty'}" style="height:24px"></div></div>`;
+        return `<div class="wb"><span class="v">${tons(v)}</span><div class="bar" style="height:${Math.max(8, Math.round(110 * v / maxV))}px;background:${wk.week === st.cur ? '#fff' : 'var(--day-blue,#2F6BFF)'}"></div></div>`;
+      }).join('')}</div>
+      <div class="wbars xs sub" style="height:auto">${P.weeks.map(wk => `<span style="text-align:center;${wk.week === st.cur ? 'color:#fff;font-weight:800' : ''}">${wk.deload ? 'S' : wk.week}</span>`).join('')}</div>
+      <div class="row small" style="border-top:1px solid var(--line);padding-top:10px;color:var(--soft)"><span class="grow">Settimana ${st.cur}: ${st.sets[st.cur] || 0} serie</span>${st.cmp ? `<span style="font-weight:700;color:${st.cmp.pct >= 0 ? 'var(--green)' : '#FF8A8A'}">${st.cmp.pct >= 0 ? '▲ +' : '▼ '}${st.cmp.pct}% sett. ${st.cmp.w} vs ${st.cmp.w - 1}</span>` : ''}</div></div>`;
+    h += `<div class="section"><div class="row" style="justify-content:space-between;padding:0 4px 8px"><span class="label">Da tenere d'occhio</span><span class="xs sub">${st.watch.length ? st.watch.length + (st.watch.length === 1 ? ' esercizio' : ' esercizi') : ''}</span></div>`;
+    if (!st.watch.length) h += `<div class="state done" style="min-height:56px;color:#fff"><span class="grow small">Nessun esercizio fermo o in calo: continua così.</span>${ICON.check}</div>`;
+    for (const w of st.watch.slice(0, 6)) {
+      const ex = w.sub || w.sl.ex;
+      const last3 = w.list.slice(-3).map(p => wtx(p.ex, p.sets[0].w) + ' × ' + p.sets[0].r).join(w.down ? ' → ' : ' · ');
+      h += `<div class="watch ${w.down ? 'down' : ''}"><div class="row" style="justify-content:space-between;gap:8px"><span style="font-weight:700">${esc(exName(ex))} <span class="xs sub">${esc(w.sl.range)}</span></span>
+        <span class="pill" style="${w.down ? 'background:#B03A3A;color:#fff' : 'background:var(--gold);color:var(--bg)'};font-size:12px;font-weight:800">${w.down ? 'IN CALO' : 'FERMO DA ' + (w.stall + 1) + ' VOLTE'}</span></div>
+        <span class="num" style="font-size:18px;color:var(--soft)">${last3}</span>
+        <span class="small" style="color:#E6EBF4;line-height:1.4">${esc(watchAdvice(w))}</span>
+        <button class="xs" data-act="resetbase" data-v="${esc(w.k)}" style="align-self:flex-start;color:var(--sub);text-decoration:underline;min-height:32px">Ho cambiato attrezzo o variante: riparti da qui</button></div>`;
+    }
+    return h + `</div><div class="section"><button class="btn ghost" data-act="progtab" data-v="ex">Tutti gli esercizi e i record ›</button></div>`;
+  }
+  function renderEsercizi() {
+    let h = `<div class="section" style="margin-top:14px"><span class="label">Record per esercizio</span><div style="display:flex;flex-direction:column;gap:8px">`;
     const keys = [];
     P.weeks[0].days.forEach(d => !d.rest && d.slots.forEach(sl => { const k = keyOf(sl); if (!keys.find(x => x.k === k)) keys.push({ k, sl }); }));
     for (const { k, sl } of keys) {
@@ -666,7 +752,7 @@
       const best = bestOf(list); const lastP = list[list.length - 1]; const ex = lastP.ex;
       h += `<button class="state done" data-act="exstat" data-v="${esc(k)}" style="width:100%;text-align:left;color:#fff;min-height:56px"><span class="grow"><span style="font-weight:600">${esc(exName(sl.ex))}</span><br><span class="xs sub">${esc(sl.range)} rip · ultima ${wtx(ex, lastP.sets[0].w)} × ${lastP.sets[0].r}</span></span><span class="num" style="font-size:22px"><span style="color:var(--gold)">●</span> ${wtx(ex, best.w)} × ${best.r}</span></button>`;
     }
-    h += `</div></div><div class="section"><div class="state todo" style="min-height:56px"><span class="grow small">Peso, misure, foto e statistiche avanzate arrivano nelle prossime versioni.</span></div></div></div>`;
+    h += `</div></div><div class="section"><div class="state todo" style="min-height:56px"><span class="grow small">Peso, misure, foto e statistiche avanzate arrivano nelle prossime versioni.</span></div></div>`;
     return h;
   }
   function exStat(k) {
@@ -1019,6 +1105,12 @@
       case 'resume': closeSheet(); unlockAudio(); openWorkout(); break;
       case 'leave': view = 'tabs'; S.ui.tab = 'oggi'; save(); render(); break;
       case 'home': view = 'tabs'; S.ui.tab = 'oggi'; summary = null; save(); render(); break;
+      case 'progtab': S.ui.progTab = v; save(); render(); window.scrollTo({ top: 0 }); break;
+      case 'resetbase': {
+        if (!await ask('Ripartire da qui?', 'Per questo esercizio confronto, record e suggerimenti terranno conto solo dell\'ultimo allenamento in poi. Utile se hai cambiato attrezzo o variante.', 'Riparti da qui')) return;
+        const list = perfs(v); const last = list[list.length - 1];
+        S.since = S.since || {}; S.since[v] = last ? last.s.order : 0; save(); render(); toast('Fatto: si riparte dall\'ultimo allenamento'); break;
+      }
       case 'soon': toast(v + ' arriva in una prossima versione'); break;
       case 'pweek': S.ui.progWeek = +v; save(); render(); break;
       case 'dayinfo': dayInfo(+el.dataset.w, +el.dataset.d); break;

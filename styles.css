@@ -190,3 +190,16 @@ button.note{width:100%;text-align:left;color:inherit}
 @keyframes rise{0%{transform:translateY(14px);opacity:0}100%{transform:none;opacity:1}}
 .confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:80}
 @media (prefers-reduced-motion: reduce){.recap-hero,.recap-check,.rise{animation:none}}
+
+/* progressi */
+.seg{background:var(--card);border-radius:14px;padding:4px;display:grid;gap:4px}
+.seg button{height:40px;border-radius:11px;color:var(--soft);font-size:15px;font-weight:600}
+.seg button[aria-selected="true"]{background:#fff;color:var(--bg);font-weight:700}
+.wbars{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;align-items:end;height:136px}
+.wb{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:136px}
+.wb .v{font-family:var(--cond);font-size:12px;font-weight:700;color:var(--soft);white-space:nowrap}
+.wb .bar{width:100%;border-radius:6px}
+.wb .bar.empty{border:1.5px dashed var(--dash)}
+.wb .bar.deload{background:#2C3A55}
+.watch{background:var(--card);border-radius:18px;padding:12px 14px;border:1.5px solid #6B5A1E;display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.watch.down{border-color:#6B2B2B}
