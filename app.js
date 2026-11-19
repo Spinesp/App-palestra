@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.3.2';
+  const VERSION = '1.4';
 
   // ---------- stato ----------
   let S = load();
@@ -181,6 +181,21 @@
     }
     return { w: last.w, r: Math.min(hi, last.r + 1), rir, why: 'Stessa assistenza, una ripetizione in più verso ' + hi + '.' };
   }
+  // obiettivo per la serie i con il peso scelto ora: stesso "sforzo" del suggerimento, ripetizioni ricalcolate
+  function targetFor(slot, i, sub, w) {
+    const ex = sub || slot.ex;
+    const g = suggest(slot, i, sub);
+    if (g.w == null || g.r == null || w == null) return null;
+    if (w === g.w) return { w, r: g.r, rir: g.rir, same: true };
+    const L = loadOf(ex, w), E = e1x(ex, g.w, g.r);
+    if (!(L > 0) || (!g.w && !isAssisted(ex))) return null;
+    const r = Math.max(1, Math.min(slot.hi + 4, Math.round(30 * (E / L - 1))));
+    return { w, r, rir: g.rir, same: false };
+  }
+  function retarget(slot, en, i) {
+    const x = en.sets[i]; const t = targetFor(slot, i, en.sub, x.w);
+    if (t) x.r = t.r;
+  }
   function fatigue(key) {
     const list = perfs(key);
     if (list.length < 3) return false;
@@ -334,16 +349,15 @@
     const t = $('#rest-time'); const f = $('#rest-fill');
     if (t) t.textContent = mmss(left);
     if (f) f.style.width = Math.max(0, Math.min(100, 100 * left / s.rest.total)) + '%';
-    if (left <= 10 && left > 9 && !warned) { warned = true; if (S.settings.sound) beep(660, 0.12); }
+    const lr = $('#live-rest'); if (lr) lr.textContent = mmss(left);
+    if (left <= 10 && left > 0 && !warned) { warned = true; alertWarn(); }
     if (left <= 0) endRest(true);
   }
   function endRest(natural) {
     const s = activeSession(); if (!s || !s.rest) return;
     s.rest = null;
     if (natural) {
-      if (S.settings.sound) { beep(880, 0.18); setTimeout(() => beep(880, 0.18), 260); setTimeout(() => beep(1175, 0.3), 520); }
-      if (S.settings.flash) flash();
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      alertEnd();
       if (S.settings.autoAdvance && slotComplete(s, s.cur)) {
         const n = nextIncomplete(s, s.cur);
         if (n != null) { s.cur = n; ensureEntry(s, n); toast('Avanti: ' + exName(dayOf(s.week, s.day).slots[n].ex)); }
@@ -351,23 +365,69 @@
     }
     save(); render();
   }
-  let actx = null;
+  // ---------- avvisi: suono, lampeggio, vibrazione ----------
+  // Il suono passa da un elemento <audio> (non dalla Web Audio), così su iPhone si sente anche con il silenzioso.
+  function wavBeeps(list) {
+    const rate = 22050; let total = 0; list.forEach(b => { total += b.d + (b.gap || 0); });
+    const n = Math.ceil(total * rate), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+    let t0 = 0;
+    for (const b of list) {
+      const len = Math.floor(b.d * rate), start = Math.floor(t0 * rate);
+      for (let i = 0; i < len && start + i < n; i++) {
+        const env = Math.min(1, i / 200, (len - i) / 400);
+        v.setInt16(44 + (start + i) * 2, Math.sin(2 * Math.PI * b.f * i / rate) * 0.8 * env * 32767, true);
+      }
+      t0 += b.d + (b.gap || 0);
+    }
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  const SND = {};
+  let audioReady = false;
   function unlockAudio() {
-    try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { actx = null; }
+    if (audioReady) return;
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
+      SND.warn = new Audio(wavBeeps([{ f: 880, d: 0.15 }]));
+      SND.end = new Audio(wavBeeps([{ f: 880, d: 0.18, gap: 0.08 }, { f: 880, d: 0.18, gap: 0.08 }, { f: 1175, d: 0.35 }]));
+      for (const a of Object.values(SND)) { a.preload = 'auto'; a.volume = 0; a.play().then(() => { a.pause(); a.currentTime = 0; a.volume = 1; }).catch(() => { a.volume = 1; }); }
+      audioReady = true;
+    } catch (e) { audioReady = false; }
   }
-  function beep(freq, dur) {
-    if (!actx) return;
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = 'sine'; o.frequency.value = freq;
-    g.gain.setValueAtTime(0.0001, actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.5, actx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-    o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + dur + 0.02);
+  function play(name) {
+    const a = SND[name]; if (!a) return;
+    try { a.currentTime = 0; a.volume = 1; a.play().catch(() => {}); } catch (e) { /* niente suono */ }
   }
-  function flash() {
-    const d = document.createElement('div'); d.className = 'flash'; document.body.appendChild(d);
-    setTimeout(() => d.remove(), 2600);
+  // vibrazione: su iPhone il web non può vibrare davvero; si usa il "tocco" dell'interruttore di sistema dove iOS lo permette
+  let hapticEl = null;
+  function haptic() {
+    try {
+      if (navigator.vibrate) { navigator.vibrate(120); return; }
+      if (!hapticEl) {
+        hapticEl = document.createElement('label'); hapticEl.style.cssText = 'position:fixed;left:-99px;top:0;opacity:0;pointer-events:none';
+        hapticEl.innerHTML = '<input type="checkbox" switch>'; document.body.appendChild(hapticEl);
+      }
+      hapticEl.click();
+    } catch (e) { /* non supportato */ }
   }
+  function flash(times, ms) {
+    const d = document.createElement('div'); d.className = 'flash';
+    d.style.animation = `flash ${ms}ms ease-out ${times}`; document.body.appendChild(d);
+    setTimeout(() => d.remove(), times * ms + 100);
+  }
+  function alertWarn() {
+    if (S.settings.sound) play('warn');
+    if (S.settings.flash) flash(3, 180);
+    if (S.settings.vibe !== false) haptic();
+  }
+  function alertEnd() {
+    if (S.settings.sound) play('end');
+    if (S.settings.flash) flash(5, 180);
+    if (S.settings.vibe !== false) haptic();
+  }
+  function beep() { play('warn'); }
 
   // schermo sempre acceso durante l'allenamento
   let wake = null;
@@ -399,9 +459,9 @@
     document.body.appendChild(t);
     setTimeout(() => t.remove(), actLabel ? 6000 : 2200);
   }
-  function sheet(html, onMount) {
+  function sheet(html, onMount, top) {
     closeSheet();
-    const sc = document.createElement('div'); sc.className = 'scrim'; sc.id = 'scrim';
+    const sc = document.createElement('div'); sc.className = 'scrim' + (top ? ' top' : ''); sc.id = 'scrim';
     sc.innerHTML = '<div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>' + html + '</div>';
     sc.addEventListener('click', e => { if (e.target === sc) closeSheet(); });
     document.body.appendChild(sc);
@@ -419,8 +479,8 @@
   }
   function askInput(title, value, numeric) {
     return new Promise(res => {
-      sheet(`<h3>${esc(title)}</h3><input id="ask-in" type="text" ${numeric ? 'inputmode="decimal"' : ''} value="${esc(value ?? '')}" autocomplete="off"><div style="height:10px"></div><button class="btn" data-act="input-ok">Conferma</button>`,
-        sc => { const i = $('#ask-in', sc); i.focus(); i.select(); i.addEventListener('keydown', e => { if (e.key === 'Enter') $('[data-act=input-ok]', sc).click(); }); });
+      sheet(`<h3>${esc(title)}</h3><input id="ask-in" class="${numeric ? 'bignum' : ''}" type="text" ${numeric ? 'inputmode="decimal"' : ''} value="${esc(value ?? '')}" autocomplete="off"><div style="height:10px"></div><button class="btn" data-act="input-ok">Conferma</button>`,
+        sc => { const i = $('#ask-in', sc); i.focus(); i.select(); i.addEventListener('keydown', e => { if (e.key === 'Enter') $('[data-act=input-ok]', sc).click(); }); }, true);
       pending = v => res(v);
     });
   }
@@ -432,12 +492,20 @@
     const s = activeSession();
     if (view === 'workout' && s) { app.innerHTML = renderWorkout(s); keepAwake(true); if (s.rest) ensureTick(); scrollChip(); return; }
     keepAwake(false);
-    if (view === 'summary' && summary) { app.innerHTML = renderSummary(); return; }
+    if (view === 'summary' && summary) { app.innerHTML = renderSummary(); requestAnimationFrame(animateSummary); return; }
     if (view === 'edit' && draft) { app.innerHTML = renderEdit(); return; }
     view = 'tabs';
     const tab = S.ui.tab;
     const body = tab === 'oggi' ? renderOggi() : tab === 'programmi' ? renderProgrammi() : tab === 'progressi' ? renderProgressi() : renderImpostazioni();
-    app.innerHTML = body + renderTabbar(tab);
+    app.innerHTML = (s ? renderLiveBar(s) : '') + body + renderTabbar(tab);
+    if (s && s.rest) ensureTick();
+  }
+  function renderLiveBar(s) {
+    const day = dayOf(s.week, s.day);
+    const left = s.rest ? (s.rest.endAt - Date.now()) / 1000 : null;
+    return `<button class="livebar" data-act="resume" style="--c:${day.color}" aria-label="Torna all'allenamento in corso">
+      <span class="dot" style="background:${day.color}"></span><span class="grow" style="text-align:left"><b>${esc(day.name)}</b> in corso · <span id="live-clock" class="num">${clockTxt(Date.now() - s.startedAt)}</span></span>
+      ${s.rest ? `<span class="pill" style="background:#23365A">Recupero <span id="live-rest" class="num" style="font-size:17px">${mmss(left)}</span></span>` : ''}<span style="font-size:20px">›</span></button>`;
   }
   function scrollChip() {
     const c = $('.chip.now'); if (c) c.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -494,6 +562,11 @@
     }
     h += `<div class="state todo" style="margin-top:10px;min-height:56px"><span class="dot" style="background:var(--cyan)"></span><span class="grow"><b style="color:#fff">Corsa</b><br><span class="xs">Arriva nella prossima versione dell'app</span></span></div>`;
     h += `</div>`;
+    const nDone = doneSessions().filter(s => s.src !== 'excel').length;
+    const days = S.lastBackup ? Math.floor((Date.now() - S.lastBackup) / 86400000) : null;
+    if (nDone && (days == null || days >= 7)) {
+      h += `<div class="section"><div class="card" style="display:flex;align-items:center;gap:12px;border:1.5px solid #6B5A1E"><div class="grow"><div style="font-weight:700">Fai un backup</div><div class="xs sub">${days == null ? 'Non hai ancora salvato i tuoi dati fuori dal telefono.' : 'Ultimo backup ' + days + ' giorni fa.'}</div></div><button class="btn" style="width:auto;height:44px;padding:0 16px;font-size:15px" data-act="export">Esporta</button></div></div>`;
+    }
     const last = doneSessions().filter(s => s.src !== 'excel').slice(-1)[0];
     if (last) {
       const day = dayOf(last.week, last.day);
@@ -616,7 +689,9 @@
   function renderImpostazioni() {
     const sw = (k, l, d) => `<div class="setting"><div class="grow"><div style="font-weight:600">${l}</div><div class="xs sub">${d}</div></div><button class="switch" role="switch" aria-checked="${!!S.settings[k]}" aria-label="${l}" data-act="setting" data-v="${k}"></button></div>`;
     return `<div class="page"><h1 class="cond page-title">Impostazioni</h1>
-      <div class="card" style="padding:4px 16px">${sw('sound', 'Suono a fine recupero', 'Tre bip, più un bip 10 secondi prima')}${sw('flash', 'Schermo che lampeggia', 'A fine recupero')}${sw('autoAdvance', 'Avanti automatico', 'A fine esercizio passa al successivo quando finisce il recupero')}
+      <div class="card" style="padding:4px 16px">${sw('sound', 'Suono a fine recupero', 'Un bip 10 secondi prima, tre bip alla fine. Si sente anche con il silenzioso')}${sw('flash', 'Schermo che lampeggia', '3 lampi 10 secondi prima, 5 a fine recupero')}
+        <div class="setting"><div class="grow"><div style="font-weight:600">Vibrazione</div><div class="xs sub">10 secondi prima e a fine recupero, dove l'iPhone lo permette</div></div><button class="switch" role="switch" aria-checked="${S.settings.vibe !== false}" aria-label="Vibrazione" data-act="setting" data-v="vibe"></button></div>
+        <button class="setting" data-act="testalert" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Prova gli avvisi</div><div class="xs sub">Suono, lampeggio e vibrazione di fine recupero</div></div><span style="font-size:20px">▶</span></button>${sw('autoAdvance', 'Avanti automatico', 'A fine esercizio passa al successivo quando finisce il recupero')}
         <button class="setting" data-act="bw" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Peso corporeo</div><div class="xs sub">Serve per i record degli esercizi con assistenza (trazioni)</div></div><span class="num" style="font-size:22px">${fmt(S.settings.bw)} kg</span></button></div>
       <div class="section"><span class="label">Backup dei dati</span><div class="card" style="display:flex;flex-direction:column;gap:10px">
         <div class="small sub">I dati restano su questo iPhone. Fai un backup ogni tanto e salvalo su Google Drive o sul PC: se cambi telefono lo reimporti da qui.</div>
@@ -759,6 +834,11 @@
     const g = suggest(slot, i, en.sub);
     const target = slot.rir[i];
     const uni = meta(ex).unilateral;
+    const tgt = targetFor(slot, i, en.sub, x.w);
+    if (tgt && !tgt.same) {
+      g.w = tgt.w; g.r = tgt.r; g.up = false;
+      g.why = 'Peso cambiato: con ' + (isAssisted(ex) ? 'assistenza ' : '') + fmt(tgt.w) + ' kg l\'obiettivo equivalente è ' + tgt.r + ' ripetizioni.';
+    }
     const badge = g.w != null || g.r != null ? `<span class="sugg ${g.up ? '' : 'keep'}">${g.up ? '↑ prova' : 'obiettivo'} ${isAssisted(ex) ? (g.w ? 'ass. ' + fmt(g.w) + ' kg × ' : 'senza assist. × ') : (g.w ? fmt(g.w) + ' kg × ' : '')}${g.r}${g.rir != null ? ' · RIR ' + g.rir : ''}</span>` : '';
     const stepper = (side) => {
       const wk = side ? 'w' + side : 'w', rk = side ? 'r' + side : 'r';
@@ -835,18 +915,92 @@
     const day = dayOf(s.week, s.day);
     const missing = s.seq.filter(si => !slotComplete(s, si)).length;
     if (missing && !await ask('Terminare l\'allenamento?', 'Mancano ' + missing + (missing === 1 ? ' esercizio.' : ' esercizi.'), 'Termina')) return;
-    let records = 0, sets = 0;
-    for (const si of Object.keys(s.entries)) { checkRecord(s, +si); if (s.entries[si].recordNew) records++; sets += slotDoneCount(s.entries[si]); }
+    let records = 0, sets = 0, improved = 0, compared = 0;
+    const recs = [];
+    for (const si of Object.keys(s.entries)) {
+      const en = s.entries[si]; const slot = day.slots[+si]; const ex = en.sub || slot.ex; const key = keyOf(slot, en.sub);
+      const list = perfs(key); const prevBest = bestOf(list); const prevLast = list[list.length - 1];
+      checkRecord(s, +si); sets += slotDoneCount(en);
+      const mine = en.sets.filter(x => x.done && x.r != null);
+      if (prevLast && mine.length) { compared++; if (e1x(ex, mine[0].w, mine[0].r) > e1x(ex, prevLast.sets[0].w, prevLast.sets[0].r) + 0.01) improved++; }
+      if (en.recordNew) { records++; recs.push({ ex: exName(ex), txt: en.recordNew.txt, w: en.recordNew.w, r: en.recordNew.r, delta: recordDelta(ex, prevBest, en.recordNew) }); }
+    }
+    const vol = sessionVolume(s);
+    const prevSame = doneSessions().filter(x => x !== s && dayOf(x.week, x.day).name === day.name).slice(-1)[0];
     s.status = 'done'; s.endedAt = Date.now(); s.rest = null; s.records = records; s.order = ++S.orderSeq;
-    summary = { day: day.name, color: day.color, week: s.week, min: Math.round((s.endedAt - s.startedAt) / 60000), dur: clockTxt(s.endedAt - s.startedAt), sets, records, recs: Object.entries(s.entries).filter(([, en]) => en.recordNew).map(([si, en]) => ({ ex: exName(en.sub || day.slots[+si].ex), ...en.recordNew })) };
+    const vc = prevSame ? volumeCompare(s, prevSame) : null;
+    summary = { day: day.name, color: day.color, week: s.week, min: Math.round((s.endedAt - s.startedAt) / 60000), dur: clockTxt(s.endedAt - s.startedAt), sets, records, recs, vol, vc, improved, compared };
     save(); view = 'summary'; render(); window.scrollTo({ top: 0 });
+  }
+  function recordDelta(ex, prev, now) {
+    if (!prev) return 'primo record';
+    const out = [];
+    const dw = (now.w || 0) - (prev.w || 0);
+    if (Math.abs(dw) > 0.001) out.push(isAssisted(ex) ? (dw < 0 ? '−' + fmt(-dw) + ' kg assist.' : '+' + fmt(dw) + ' kg assist.') : (dw > 0 ? '+' : '−') + fmt(Math.abs(dw)) + ' kg');
+    const dr = now.r - prev.r;
+    if (dr) out.push((dr > 0 ? '+' : '−') + Math.abs(dr) + ' rip');
+    return out.join(' · ') || 'stesso carico, più forza';
+  }
+  // kg sollevati per esercizio (chiave esercizio|range)
+  function volumeByKey(s) {
+    const day = dayOf(s.week, s.day); const out = {};
+    for (const [si, en] of Object.entries(s.entries)) {
+      const slot = day.slots[+si]; if (!slot) continue; const ex = en.sub || slot.ex;
+      if (isAssisted(ex)) continue;
+      let v = 0; for (const x of en.sets || []) if (x.done && x.w && x.r) v += x.w * x.r;
+      if (v) out[keyOf(slot, en.sub)] = (out[keyOf(slot, en.sub)] || 0) + v;
+    }
+    return out;
+  }
+  function sessionVolume(s) { return Math.round(Object.values(volumeByKey(s)).reduce((a, b) => a + b, 0)); }
+  // confronto solo sugli esercizi fatti sia oggi sia l'ultima volta
+  function volumeCompare(now, prev) {
+    const a = volumeByKey(now), b = volumeByKey(prev); let x = 0, y = 0;
+    for (const k of Object.keys(a)) if (b[k]) { x += a[k]; y += b[k]; }
+    return y ? { now: Math.round(x), prev: Math.round(y) } : null;
   }
   function renderSummary() {
     const m = summary;
-    return `<div class="page"><div style="background:${m.color};border-radius:26px;padding:22px 18px"><div class="xs" style="font-weight:700">ALLENAMENTO COMPLETATO</div><div class="cond" style="font-size:44px;margin-top:4px">${esc(m.day)} · sett. ${m.week}</div></div>
-      <div class="tiles" style="margin-top:12px"><div class="tile"><span class="xs sub">Durata</span><span class="num big" style="font-weight:800">${m.dur || m.min + '′'}</span></div><div class="tile"><span class="xs sub">Serie</span><span class="num big" style="font-weight:800">${m.sets}</span></div><div class="tile"><span class="xs sub">Record</span><span class="num big" style="font-weight:800;color:var(--gold)">${m.records}</span></div></div>
-      ${m.recs.length ? `<div class="section"><span class="label">Record battuti</span>${m.recs.map(r => `<div class="state done" style="color:#fff;margin-bottom:8px"><span class="grow">${esc(r.ex)}</span><span class="num" style="font-size:20px"><span style="color:var(--gold)">●</span> ${r.txt || wtxt(r.w)} × ${r.r}</span></div>`).join('')}</div>` : ''}
+    const dv = m.vc ? m.vc.now - m.vc.prev : null;
+    const dvp = m.vc ? Math.round(100 * dv / m.vc.prev) : null;
+    return `<div class="page recap">
+      <div class="recap-hero" style="background:${m.color}">
+        <div class="recap-check"><svg viewBox="0 0 24 24" fill="none" stroke="#0E1726" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <div class="xs" style="font-weight:700;letter-spacing:.5px">ALLENAMENTO COMPLETATO</div>
+        <div class="cond" style="font-size:44px;margin-top:4px">${esc(m.day)} · sett. ${m.week}</div></div>
+      <div class="tiles rise" style="margin-top:12px;--d:.15s">
+        <div class="tile"><span class="xs sub">Durata</span><span class="num big" style="font-weight:800">${m.dur || m.min + '′'}</span></div>
+        <div class="tile"><span class="xs sub">Serie</span><span class="num big" style="font-weight:800" data-count="${m.sets}">${m.sets}</span></div>
+        <div class="tile"><span class="xs sub">Record</span><span class="num big" style="font-weight:800;color:var(--gold)" data-count="${m.records}">${m.records}</span></div></div>
+      ${m.recs.length ? `<div class="section"><span class="label">Record battuti</span>${m.recs.map((r, k) => `<div class="state done rise" style="--d:${0.35 + k * 0.12}s;color:#fff;margin-bottom:8px;min-height:58px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFC94D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3"/></svg><span class="grow"><span style="font-weight:600">${esc(r.ex)}</span><br><span class="xs" style="color:var(--green);font-weight:700">${esc(r.delta)}</span></span><span class="num" style="font-size:22px">${r.txt || wtxt(r.w)} × ${r.r}</span></div>`).join('')}</div>` : ''}
+      <div class="section rise" style="--d:${0.45 + m.recs.length * 0.12}s"><span class="label">Rispetto all'ultima volta</span><div class="card" style="display:flex;flex-direction:column;gap:10px">
+        ${m.compared ? `<div class="row"><span class="grow">Esercizi migliorati</span><span class="num" style="font-size:22px">${m.improved} su ${m.compared}</span></div>` : ''}
+        <div class="row"><span class="grow">Kg sollevati in totale</span><span class="num" style="font-size:22px"><span data-count="${m.vol}">${m.vol}</span> kg</span></div>
+        ${dv != null ? `<div class="xs" style="font-weight:700;color:${dv >= 0 ? 'var(--green)' : '#FF8A8A'}">${dv >= 0 ? '▲ +' : '▼ −'}${Math.abs(dv)} kg (${dvp >= 0 ? '+' : ''}${dvp}%) sugli stessi esercizi dell'ultimo ${esc(m.day)}</div>` : ''}
+      </div></div>
       <div class="section"><button class="btn" data-act="home">Torna a Oggi</button></div></div>`;
+  }
+  function animateSummary() {
+    const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) return;
+    document.querySelectorAll('[data-count]').forEach(el => {
+      const to = +el.dataset.count; if (!to) return; const t0 = performance.now(), D = 900;
+      const step = t => { const p = Math.min(1, (t - t0) / D); el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(step); };
+      requestAnimationFrame(step);
+    });
+    if (summary && summary.records) confetti([summary.color, '#FFC94D', '#FFFFFF', '#5FD38D']);
+  }
+  function confetti(colors) {
+    const c = document.createElement('canvas'); c.className = 'confetti'; c.width = innerWidth * 2; c.height = innerHeight * 2; document.body.appendChild(c);
+    const g = c.getContext('2d'); g.scale(2, 2);
+    const P = Array.from({ length: 90 }, () => ({ x: innerWidth / 2, y: innerHeight * 0.22, vx: (Math.random() - 0.5) * 9, vy: -Math.random() * 9 - 3, s: 4 + Math.random() * 5, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3, c: colors[Math.floor(Math.random() * colors.length)] }));
+    const t0 = performance.now();
+    const frame = t => {
+      const el = t - t0; g.clearRect(0, 0, innerWidth, innerHeight);
+      for (const p of P) { p.vy += 0.25; p.x += p.vx; p.y += p.vy; p.r += p.vr; g.save(); g.translate(p.x, p.y); g.rotate(p.r); g.globalAlpha = Math.max(0, 1 - el / 2200); g.fillStyle = p.c; g.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); g.restore(); }
+      if (el < 2200) requestAnimationFrame(frame); else c.remove();
+    };
+    requestAnimationFrame(frame);
   }
 
   // ---------- azioni ----------
@@ -869,8 +1023,9 @@
       case 'pweek': S.ui.progWeek = +v; save(); render(); break;
       case 'dayinfo': dayInfo(+el.dataset.w, +el.dataset.d); break;
       case 'exstat': exStat(v); break;
-      case 'setting': S.settings[v] = !S.settings[v]; save(); render(); if (v === 'sound' && S.settings.sound) { unlockAudio(); beep(880, 0.15); } break;
-      case 'export': download('app-palestra-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify({ app: 'app-palestra', version: VERSION, savedAt: new Date().toISOString(), state: S }), 'application/json'); break;
+      case 'setting': S.settings[v] = v === 'vibe' ? S.settings.vibe === false : !S.settings[v]; save(); render(); if (v === 'sound' && S.settings.sound) { unlockAudio(); setTimeout(() => play('warn'), 150); } break;
+      case 'testalert': unlockAudio(); setTimeout(alertEnd, 200); break;
+      case 'export': download('app-palestra-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify({ app: 'app-palestra', version: VERSION, savedAt: new Date().toISOString(), state: S }), 'application/json'); S.lastBackup = Date.now(); save(); render(); break;
       case 'csv': exportCSV(); break;
       case 'update': {
         toast('Scarico l\'ultima versione…');
@@ -898,6 +1053,7 @@
         else cur = Math.max(0, (cur ?? 0) + (+v));
         x[k] = cur;
         if (side) { x.w = Math.min(x.wL ?? x.w ?? 0, x.wR ?? x.w ?? 0); x.r = Math.min(x.rL ?? x.r ?? 0, x.rR ?? x.r ?? 0); }
+        if (a === 'w' && !side) retarget(slot, en, i);
         save(); render(); break;
       }
       case 'wtype': case 'rtype': {
@@ -907,7 +1063,7 @@
         if (n == null) return;
         x[k] = base === 'r' ? Math.round(n) : n;
         if (side) { x.w = Math.min(x.wL ?? x.w ?? 0, x.wR ?? x.w ?? 0); x.r = Math.min(x.rL ?? x.r ?? 0, x.rR ?? x.r ?? 0); }
-        if (base === 'w') { const ex = en.sub || dayOf(s.week, s.day).slots[s.cur].ex; const m = meta(ex); m.ladder = [...new Set([...(m.ladder || []), n])]; }
+        if (base === 'w') { const ex = en.sub || dayOf(s.week, s.day).slots[s.cur].ex; const m = meta(ex); m.ladder = [...new Set([...(m.ladder || []), n])]; if (!side) retarget(dayOf(s.week, s.day).slots[s.cur], en, i); }
         save(); render(); break;
       }
       case 'rir': { const x = ensureEntry(s, s.cur).sets[+el.dataset.i]; x.rir = x.rir === +v ? null : +v; save(); render(); break; }
@@ -975,7 +1131,7 @@
         const iv = setInterval(() => {
           const el2 = $('#hold-time'); const left = Math.max(0, Math.ceil((t.endAt - Date.now()) / 1000));
           if (el2) el2.textContent = left;
-          if (left <= 0) { clearInterval(iv); if (S.settings.sound) beep(880, 0.3); if (S.settings.flash) flash(); }
+          if (left <= 0) { clearInterval(iv); alertEnd(); }
         }, 250);
         break;
       }
@@ -1081,6 +1237,7 @@
 
   // delega degli eventi
   document.addEventListener('click', e => {
+    unlockAudio();
     const el = e.target.closest('[data-act]');
     if (!el || el.tagName === 'INPUT') return;
     const a = el.dataset.act;
@@ -1120,7 +1277,7 @@
   render();
   if (S && activeSession() && activeSession().rest) ensureTick();
   // cronometro dell'allenamento: aggiorna solo il numero, ogni secondo
-  setInterval(() => { const el = $('#wo-clock'); const s = S && activeSession(); if (el && s) el.textContent = clockTxt(Date.now() - s.startedAt); }, 1000);
+  setInterval(() => { const s = S && activeSession(); if (!s) return; for (const id of ['#wo-clock', '#live-clock']) { const el = $(id); if (el) el.textContent = clockTxt(Date.now() - s.startedAt); } }, 1000);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
