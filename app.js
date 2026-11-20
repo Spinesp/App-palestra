@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
 
   // ---------- stato ----------
   let S = load();
@@ -926,8 +926,15 @@
     const steps = mates.map((m, k) => {
       const done = counts[k] >= round;
       const st = done ? 'done' : m === si ? 'now' : 'todo';
-      const nm = shortName(exName((s.entries[m] && s.entries[m].sub) || day.slots[m].ex));
-      return `<button class="ss-step ${st}" data-act="slot" data-v="${m}">${done ? ICON.check : `<b>${String.fromCharCode(65 + k)}</b>`}<span>${esc(nm)}</span></button>`;
+      const enM = ensureEntry(s, m);
+      const exM = enM.sub || day.slots[m].ex;
+      const nm = shortName(exName(exM));
+      // peso e ripetizioni da preparare per questo giro (quelli già impostati nella serie)
+      const set = enM.sets[Math.min(round, enM.sets.length) - 1] || {};
+      const w = set.w != null ? set.w : set.wL;
+      const r = set.r != null ? set.r : set.rL;
+      const plan = (w != null || r != null) ? `<em class="num">${esc(wtx(exM, w))}${!isAssisted(exM) && w ? ' kg' : ''} × ${r != null ? r : '–'}</em>` : '';
+      return `<button class="ss-step ${st}" data-act="slot" data-v="${m}">${done ? ICON.check : `<b>${String.fromCharCode(65 + k)}</b>`}<span class="ss-txt"><span>${esc(nm)}</span>${plan}</span></button>`;
     }).join('<span class="ss-arrow" aria-hidden="true">→</span>');
     const restDone = allDone || counts.every(c => c >= round);
     const lastName = shortName(exName((s.entries[last] && s.entries[last].sub) || day.slots[last].ex));
