@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.5';
+  const VERSION = '1.5.1';
 
   // ---------- stato ----------
   let S = load();
@@ -840,6 +840,7 @@
         <button class="iconbtn" aria-label="Sostituisci esercizio" data-act="subs">${ICON.swap}</button>
         <button class="iconbtn" aria-label="Altre opzioni" data-act="exmenu">${ICON.more}</button></div></div>`;
     if (en.sub) h += `<div class="tag" style="margin-top:8px">Sostituisce ${esc(exName(slot.ex))}</div>`;
+    if (slot.group) h += renderSSGuide(s, day, si);
     if (slot.tech) h += `<div class="tag" style="margin-top:8px;background:#2A1F45;color:#D9C8FF">Ultima serie: ${TECH[slot.tech]}</div>`;
 
     // note
@@ -911,6 +912,28 @@
     let url = (CAT[slot.ex] || {}).video;
     if (en.sub) { const sb = ((CAT[slot.ex] || {}).subs || []).find(x => x.name === en.sub); url = sb ? sb.video : (CAT[en.sub] || {}).video; }
     return url || 'https://www.youtube.com/results?search_query=' + encodeURIComponent('Jeff Nippard ' + (en.sub || slot.ex));
+  }
+  // riquadro guida superserie: giro attuale, ordine degli esercizi e quando parte il recupero
+  function renderSSGuide(s, day, si) {
+    const g = day.slots[si].group;
+    const mates = s.seq.filter(x => day.slots[x].group === g);
+    const counts = mates.map(m => slotDoneCount(ensureEntry(s, m)));
+    const rounds = Math.max(...mates.map(m => day.slots[m].sets));
+    const allDone = mates.every((m, k) => counts[k] >= day.slots[m].sets);
+    const round = allDone ? rounds : Math.min(rounds, Math.min(...mates.map((m, k) => counts[k] < day.slots[m].sets ? counts[k] : Infinity)) + 1);
+    const restSec = Math.max(...mates.map(m => day.slots[m].rest));
+    const last = mates[mates.length - 1];
+    const steps = mates.map((m, k) => {
+      const done = counts[k] >= round;
+      const st = done ? 'done' : m === si ? 'now' : 'todo';
+      const nm = shortName(exName((s.entries[m] && s.entries[m].sub) || day.slots[m].ex));
+      return `<button class="ss-step ${st}" data-act="slot" data-v="${m}">${done ? ICON.check : `<b>${String.fromCharCode(65 + k)}</b>`}<span>${esc(nm)}</span></button>`;
+    }).join('<span class="ss-arrow" aria-hidden="true">→</span>');
+    const restDone = allDone || counts.every(c => c >= round);
+    const lastName = shortName(exName((s.entries[last] && s.entries[last].sub) || day.slots[last].ex));
+    return `<div class="ss-guide"><div class="ss-head"><span>SUPERSERIE ${esc(g)}</span><span>${allDone ? 'COMPLETATA' : 'GIRO ' + round + ' DI ' + rounds}</span></div>
+      <div class="ss-steps">${steps}<span class="ss-arrow" aria-hidden="true">→</span><span class="ss-step rest ${restDone ? 'done' : 'todo'}">${ICON.clock}<span>${restTxt(restSec)}</span></span></div>
+      <div class="ss-tip">Nessuna pausa tra gli esercizi: il recupero parte dopo ${esc(lastName)}.</div></div>`;
   }
   function shortName(n) {
     return n.replace(/^Machine |^Chest-Supported |^Single-Arm |^Single-Leg |^Close-Grip |^Incline |^Standing |^Seated /, '').replace(/ \(.*\)/, '');
