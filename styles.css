@@ -221,3 +221,14 @@ button.note{width:100%;text-align:left;color:inherit}
 .ss-step.rest{flex:0 0 auto}
 .ss-arrow{flex:none;color:var(--muted);font-weight:700}
 .ss-tip{margin-top:8px;font-size:13px;color:var(--sub)}
+/* disegno dischi */
+.plate-set{min-height:40px;border-radius:12px;border:1.5px dashed #B9C2D0;color:#4A5568;font-size:14px;font-weight:600}
+.plates{display:flex;align-items:center;gap:10px;background:#EEF2F8;border-radius:14px;padding:6px 10px;text-align:left;color:var(--bg)}
+.plate-svg{flex:none;width:150px;height:auto;max-height:92px}
+.plate-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.plate-txt .t{font-size:11px;font-weight:800;letter-spacing:.05em;color:#4A5568}
+.plate-txt .num{font-family:var(--cond);font-weight:800;font-size:24px;line-height:1.05}
+.plate-txt .d{font-size:12px;font-weight:700;color:#1F7A3A}
+.plate-warn{font-size:12px;font-weight:700;color:#B42318}
+.chipbtn{min-height:40px;padding:0 12px;border-radius:20px;border:1.5px solid var(--dash);font-weight:700;font-size:14px}
+.chipbtn.on{background:#fff;color:var(--bg);border-color:#fff}

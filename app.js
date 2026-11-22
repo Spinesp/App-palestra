@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.5.3';
+  const VERSION = '1.6';
 
   // ---------- stato ----------
   let S = load();
@@ -17,7 +17,7 @@
       catalog: seed.catalog,
       sessions: seed.history.map(h => JSON.parse(JSON.stringify(h))),
       meta: {},              // per esercizio: {alias, myNote, ladder:[], unilateral, assisted}
-      settings: { sound: true, flash: true, autoAdvance: true, bw: 77.5 },
+      settings: { sound: true, flash: true, autoAdvance: true, bw: 77.5, plates: [15, 5, 2.5] },
       ui: { tab: 'oggi', progWeek: null },
       orderSeq: seed.history.length,
     };
@@ -26,7 +26,7 @@
     let st = null;
     try { const raw = localStorage.getItem(KEY); if (raw) st = JSON.parse(raw); } catch (e) { st = null; }
     if (st && !st.program && SEED) { st.program = SEED.program; st.catalog = SEED.catalog; }
-    if (st && st.program) { if (st.settings.bw == null) st.settings.bw = 77.5; return st; }
+    if (st && st.program) { if (st.settings.bw == null) st.settings.bw = 77.5; if (!st.settings.plates) st.settings.plates = [15, 5, 2.5]; return st; }
     return SEED ? freshState(SEED) : null;
   }
   function save() {
@@ -91,7 +91,101 @@
     for (const p of list) for (const x of p.sets) if (!best || e1x(p.ex, x.w, x.r) > e1x(p.ex, best.w, best.r)) best = x;
     return best;
   }
+  // ---------- DISCHI: bilancieri e macchine a dischi ----------
+  const EQUIP = { bar: 'Bilanciere', m2: 'Macchina a dischi, 2 lati', m1: 'Macchina a dischi, 1 lato', none: 'Nessun disegno' };
+  function plateCfg(ex) {
+    const q = meta(ex).equip; if (!q || isAssisted(ex)) return null;
+    if (q.type === 'bar') return { mult: 2, base: q.bar || 0 };
+    if (q.type === 'm2') return { mult: 2, base: 0 };
+    if (q.type === 'm1') return { mult: 1, base: 0 };
+    return null;
+  }
+  const platesList = () => [...(S.settings.plates || [15, 5, 2.5])].filter(x => x > 0).sort((a, b) => b - a);
+  // pesi per lato ottenibili con i dischi (somme possibili, fino a 200 kg per lato)
+  function sideSums() {
+    const ps = platesList(); const q = 0.25; const max = Math.round(200 / q);
+    const ok = new Uint8Array(max + 1); ok[0] = 1;
+    for (let v = 0; v <= max; v++) if (ok[v]) for (const p of ps) { const n = v + Math.round(p / q); if (n <= max) ok[n] = 1; }
+    const out = []; for (let v = 0; v <= max; v++) if (ok[v]) out.push(v * q); return out;
+  }
+  function platesFor(ex, total) {
+    const c = plateCfg(ex); if (!c || total == null) return null;
+    const side = +((total - c.base) / c.mult).toFixed(3);
+    if (side < 0) return { side, list: [], rest: side, c };
+    const list = []; let r = side;
+    for (const p of platesList()) while (r >= p - 0.001) { list.push(p); r = +(r - p).toFixed(3); }
+    return { side, list, rest: r, c };
+  }
+  // converte i pesi già registrati di un esercizio da una configurazione all'altra (es. da "un lato" a totale)
+  function convertHist(ex, from, to) {
+    const f = w => w == null ? w : +((((w - from.base) / from.mult) * to.mult) + to.base).toFixed(2);
+    for (const ss of S.sessions) { const d = dayOf(ss.week, ss.day); if (!d) continue;
+      for (const [k, e] of Object.entries(ss.entries || {})) { const sl = d.slots[k]; if (!sl || (e.sub || sl.ex) !== ex) continue;
+        for (const x of e.sets || []) { x.w = f(x.w); if (x.wL != null) x.wL = f(x.wL); if (x.wR != null) x.wR = f(x.wR); }
+        if (e.tech && e.tech.steps) e.tech.steps.forEach(t => { t.w = f(t.w); });
+        if (e.recordNew && e.recordNew.w != null) e.recordNew.w = f(e.recordNew.w); } }
+    const m = meta(ex); if (m.ladder) m.ladder = m.ladder.map(f);
+  }
+  function setEquip(ex, q) {
+    const m = meta(ex); const old = m.equip; const oldC = plateCfg(ex);
+    const raw = { mult: 1, base: 0 };
+    m.equip = { type: q.type, bar: q.type === 'bar' ? q.bar : undefined, conv: !!(old && old.conv) };
+    const newC = plateCfg(ex);
+    if (!m.equip.conv && q.conv && newC) { convertHist(ex, raw, newC); m.equip.conv = true; }
+    else if (m.equip.conv && oldC && newC && (oldC.mult !== newC.mult || oldC.base !== newC.base)) convertHist(ex, oldC, newC);
+  }
+  // disegno del lato da caricare
+  const PLATE = { 25: ['#E5484D', 84, 15], 20: ['#3B82F6', 84, 14], 15: ['#F5C542', 76, 13], 10: ['#22A55B', 66, 12], 5: ['#E8EDF5', 50, 10], 2.5: ['#E5484D', 38, 9], 1.25: ['#B9C2D0', 30, 8] };
+  function plateSvg(pl) {
+    let x = 34; const H = 92, mid = H / 2; let parts = '';
+    for (const p of pl.list) {
+      const [col, h, w] = PLATE[p] || ['#8995AB', Math.max(26, Math.min(84, 26 + p * 3)), Math.max(8, Math.min(15, 6 + p / 2))];
+      parts += `<rect x="${x}" y="${mid - h / 2}" width="${w}" height="${h}" rx="3" fill="${col}" stroke="#0E1726" stroke-width="1.5"/>`;
+      x += w + 2;
+    }
+    const end = Math.max(x + 22, 150);
+    const sleeve = `<rect x="22" y="${mid - 6}" width="${end - 22}" height="12" rx="3" fill="#56647D"/>`;
+    const stop = pl.c.mult === 2 && pl.c.base ? `<rect x="6" y="${mid - 4}" width="18" height="8" fill="#56647D"/><rect x="20" y="${mid - 16}" width="10" height="32" rx="2" fill="#8995AB"/>` : `<rect x="16" y="${mid - 20}" width="14" height="40" rx="3" fill="#8995AB"/>`;
+    return `<svg class="plate-svg" viewBox="0 0 ${end + 4} ${H}" aria-hidden="true">${sleeve}${stop}${parts}</svg>`;
+  }
+  function renderPlates(ex, x, prev) {
+    const m = meta(ex);
+    if (isAssisted(ex) || (m.equip && m.equip.type === 'none')) return '';
+    if (!m.equip) return `<button class="plate-set" data-act="equip">🏋 Disegno dischi · imposta</button>`;
+    const pl = platesFor(ex, x.w);
+    if (!pl) return `<button class="plate-set" data-act="equip">🏋 Scrivi il peso per vedere come caricare</button>`;
+    const one = pl.c.mult === 1;
+    const lbl = one ? 'SUL LATO' : 'PER LATO';
+    const txt = pl.list.length ? pl.list.map(fmt).join(' + ') : 'nessun disco';
+    let delta = '';
+    if (prev && prev.w != null) {
+      const pp = platesFor(ex, prev.w); const d = +(pl.side - pp.side).toFixed(2);
+      delta = d > 0 ? `Rispetto alla serie prima: aggiungi ${fmt(d)}${one ? '' : ' per lato'}` : d < 0 ? `Rispetto alla serie prima: togli ${fmt(-d)}${one ? '' : ' per lato'}` : 'Stesso carico della serie prima';
+    }
+    const warn = pl.side < 0 ? `<div class="plate-warn">Il peso è inferiore alla barra (${fmt(pl.c.base)} kg)</div>` : pl.rest > 0.001 ? `<div class="plate-warn">Con i tuoi dischi non si arriva esatti: mancano ${fmt(pl.rest)}${one ? '' : ' per lato'}</div>` : '';
+    return `<button class="plates" data-act="equip" aria-label="Come caricare: ${lbl.toLowerCase()} ${txt}">
+      ${plateSvg(pl)}<div class="plate-txt"><span class="t">${lbl}${pl.c.base ? ' · barra ' + fmt(pl.c.base) : ''}</span><span class="num">${esc(txt)}</span>${delta ? `<span class="d">${delta}</span>` : ''}${warn}</div></button>`;
+  }
+  let eqDraft = null;
+  function equipSheet(ex) {
+    const m = meta(ex);
+    if (!eqDraft) eqDraft = { ex, type: (m.equip && m.equip.type) || 'bar', bar: (m.equip && m.equip.bar) || (/EZ/i.test(ex) ? 10 : 20), conv: !(m.equip && m.equip.conv) };
+    const q = eqDraft; const done = m.equip && m.equip.conv;
+    const opt = (t, d) => `<button class="opt" data-act="eqtype" data-v="${t}" aria-pressed="${q.type === t}"><span style="width:18px">${q.type === t ? '●' : '○'}</span><div><div style="font-weight:600">${EQUIP[t]}</div><div class="xs sub">${d}</div></div></button>`;
+    let h = `<h3>Attrezzo · ${esc(exName(ex))}</h3><div class="small sub" style="margin:-6px 0 12px">Da ora i kg di questo esercizio sono il <b>peso totale</b>; il disegno ti dice come caricarlo.</div>`;
+    h += opt('bar', 'Il totale comprende la barra');
+    if (q.type === 'bar') h += `<div class="row" style="gap:8px;margin:-2px 0 10px 28px;flex-wrap:wrap"><span class="xs sub">Peso barra</span>${[20, 15, 10].map(b => `<button class="chipbtn ${q.bar === b ? 'on' : ''}" data-act="eqbar" data-v="${b}">${b} kg${b === 10 ? ' (EZ)' : ''}</button>`).join('')}<button class="chipbtn ${[20, 15, 10].includes(q.bar) ? '' : 'on'}" data-act="eqbar" data-v="custom">${[20, 15, 10].includes(q.bar) ? 'Altro…' : fmt(q.bar) + ' kg'}</button></div>`;
+    h += opt('m2', 'Chest press, hack squat, leg press… dischi su entrambi i lati');
+    h += opt('m1', 'T-bar row e macchine caricate da una parte sola');
+    h += opt('none', 'Pacco pesi a perno, cavi, manubri');
+    if (!done && q.type !== 'none') h += `<button class="opt" data-act="eqconv" style="margin-top:6px"><span style="width:18px;font-size:18px">${q.conv ? '☑' : '☐'}</span><div><div style="font-weight:600">Finora ho segnato il peso di un lato</div><div class="xs sub">Converte una volta lo storico in totali (es. 27,5 → ${q.type === 'm1' ? '27,5' : fmt(27.5 * 2 + (q.type === 'bar' ? q.bar : 0))}), così record e suggerimenti restano giusti</div></div></button>`;
+    if (done) h += `<div class="xs sub" style="margin:4px 0 10px">Lo storico è già stato convertito in totali.</div>`;
+    h += `<button class="btn" data-act="eqsave" style="margin-top:6px">Salva</button>`;
+    sheet(h);
+  }
   function ladderFor(ex) {
+    const pc = plateCfg(ex);
+    if (pc) return sideSums().map(v => +(pc.base + v * pc.mult).toFixed(2));
     const set = new Set((meta(ex).ladder || []));
     for (const s of S.sessions) {
       const day = dayOf(s.week, s.day);
@@ -813,7 +907,8 @@
       <div class="card" style="padding:4px 16px">${sw('sound', 'Suono a fine recupero', 'Un bip 10 secondi prima, tre bip alla fine. Si sente anche con il silenzioso')}${sw('flash', 'Schermo che lampeggia', '3 lampi 10 secondi prima, 5 a fine recupero')}
         <div class="setting"><div class="grow"><div style="font-weight:600">Vibrazione</div><div class="xs sub">10 secondi prima e a fine recupero, dove l'iPhone lo permette</div></div><button class="switch" role="switch" aria-checked="${S.settings.vibe !== false}" aria-label="Vibrazione" data-act="setting" data-v="vibe"></button></div>
         <button class="setting" data-act="testalert" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Prova gli avvisi</div><div class="xs sub">Suono, lampeggio e vibrazione di fine recupero</div></div><span style="font-size:20px">▶</span></button>${sw('autoAdvance', 'Avanti automatico', 'A fine esercizio passa al successivo quando finisce il recupero')}
-        <button class="setting" data-act="bw" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Peso corporeo</div><div class="xs sub">Serve per i record degli esercizi con assistenza (trazioni)</div></div><span class="num" style="font-size:22px">${fmt(S.settings.bw)} kg</span></button></div>
+        <button class="setting" data-act="bw" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Peso corporeo</div><div class="xs sub">Serve per i record degli esercizi con assistenza (trazioni)</div></div><span class="num" style="font-size:22px">${fmt(S.settings.bw)} kg</span></button>
+        <button class="setting" data-act="plates" style="width:100%;text-align:left"><div class="grow"><div style="font-weight:600">Dischi della palestra</div><div class="xs sub">Per il disegno di bilancieri e macchine a dischi e per i salti di +/−</div></div><span class="num" style="font-size:20px">${platesList().map(fmt).join(' · ')}</span></button></div>
       <div class="section"><span class="label">Backup dei dati</span><div class="card" style="display:flex;flex-direction:column;gap:10px">
         <div class="small sub">I dati restano su questo iPhone. Fai un backup ogni tanto e salvalo su Google Drive o sul PC: se cambi telefono lo reimporti da qui.</div>
         <button class="btn" data-act="export">Esporta backup</button>
@@ -1002,6 +1097,7 @@
     return `<div class="setcard"><div class="row" style="justify-content:space-between"><span style="font-weight:700">Serie ${i + 1}${slot.sets > 1 ? ' di ' + slot.sets : ''}</span>${badge}</div>
       ${g.why ? `<div class="why">${esc(g.why)}</div>` : ''}
       ${uni ? stepper('L') + stepper('R') : stepper('')}
+      ${uni ? '' : renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null)}
       <div class="rir"><span>RIR</span>${[0, 1, 2, 3].map(v => `<button class="${target === v ? 'target' : ''} ${rirSel === v ? 'sel' : ''}" data-act="rir" data-i="${i}" data-v="${v}" aria-pressed="${rirSel === v}">${v === 3 ? '3+' : v}</button>`).join('')}</div>
       <button class="btn dark" data-act="done" data-i="${i}">Fatto${rirSel == null && target != null ? ' · RIR ' + target : ''}</button></div>`;
   }
@@ -1193,6 +1289,13 @@
         } catch (err) { /* si ricarica comunque */ }
         location.reload(); break;
       }
+      case 'plates': {
+        const t = await askInput('Dischi disponibili (kg), separati da spazi', platesList().map(fmt).join(' '));
+        if (t == null) break;
+        const ps = [...new Set(String(t).split(/[\s;\/]+|-(?=\d)/).map(x => parseFloat(x.replace(',', '.'))).filter(x => x > 0 && x < 100))];
+        if (ps.length) { S.settings.plates = ps.sort((a, b) => b - a); save(); render(); }
+        break;
+      }
       case 'bw': { const n = await promptNum('Peso corporeo in kg', S.settings.bw); if (n) { S.settings.bw = n; save(); render(); } break; }
       case 'reset':
         if (await ask('Azzerare tutto?', 'Cancello tutti i dati registrati nell\'app e riparto dallo storico dell\'Excel. Prima conviene esportare un backup.', 'Azzera tutto', true)) { S = freshState({ program: S.program, catalog: S.catalog, history: S.sessions.filter(x => x.src === 'excel') }); bindData(); save(); render(); toast('Dati azzerati'); }
@@ -1323,6 +1426,7 @@
       <button class="opt" data-act="mynote2">Modifica la tua nota fissa</button>
       <button class="opt" data-act="uni">${m.unilateral ? '✓ ' : ''}Separa lato sinistro e destro</button>
       <button class="opt" data-act="assist">${isAssisted(ex) ? '✓ ' : ''}I kg sono assistenza della macchina</button>
+      <button class="opt" data-act="equip">Attrezzo e disegno dischi: ${m.equip ? EQUIP[m.equip.type] + (m.equip.type === 'bar' ? ' ' + fmt(m.equip.bar) + ' kg' : '') : 'non impostato'}</button>
       <button class="opt" data-act="tolast">Fallo per ultimo (macchina occupata)</button>
       <button class="opt" data-act="refill">Ricalcola i suggerimenti per le serie da fare</button>`);
   }
@@ -1368,6 +1472,19 @@
         const si = +el.dataset.v, d = +el.dataset.d; const o = s.seq; const p = o.indexOf(si); const q = p + d;
         if (q < 0 || q >= o.length) return true;
         [o[p], o[q]] = [o[q], o[p]]; save(); listSheet(); render(); return true;
+      }
+      case 'equip': eqDraft = null; equipSheet(ex); return true;
+      case 'eqtype': eqDraft.type = el.dataset.v; equipSheet(eqDraft.ex); return true;
+      case 'eqconv': eqDraft.conv = !eqDraft.conv; equipSheet(eqDraft.ex); return true;
+      case 'eqbar': {
+        if (el.dataset.v !== 'custom') { eqDraft.bar = +el.dataset.v; equipSheet(eqDraft.ex); return true; }
+        const d = eqDraft; promptNum('Peso della barra in kg', d.bar).then(n => { eqDraft = d; if (n != null) d.bar = n; equipSheet(d.ex); });
+        return true;
+      }
+      case 'eqsave': {
+        const q = eqDraft; setEquip(q.ex, q); eqDraft = null; closeSheet(); save(); render();
+        toast(q.type === 'none' ? 'Nessun disegno per questo esercizio' : (q.conv && meta(q.ex).equip.conv ? 'Storico convertito in pesi totali' : 'Attrezzo salvato'));
+        return true;
       }
       case 'subpick': {
         closeSheet(); applySub(s, s.cur, el.dataset.v || null); save(); render(); return true;
