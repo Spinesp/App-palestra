@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6';
+  const VERSION = '1.6.1';
 
   // ---------- stato ----------
   let S = load();
@@ -93,8 +93,9 @@
   }
   // ---------- DISCHI: bilancieri e macchine a dischi ----------
   const EQUIP = { bar: 'Bilanciere', m2: 'Macchina a dischi, 2 lati', m1: 'Macchina a dischi, 1 lato', none: 'Nessun disegno' };
-  function plateCfg(ex) {
+  function plateCfg(ex, perArm) {
     const q = meta(ex).equip; if (!q || isAssisted(ex)) return null;
+    if (perArm && (q.type === 'm2' || q.type === 'm1')) return { mult: 1, base: 0, arm: true };
     if (q.type === 'bar') return { mult: 2, base: q.bar || 0 };
     if (q.type === 'm2') return { mult: 2, base: 0 };
     if (q.type === 'm1') return { mult: 1, base: 0 };
@@ -108,8 +109,8 @@
     for (let v = 0; v <= max; v++) if (ok[v]) for (const p of ps) { const n = v + Math.round(p / q); if (n <= max) ok[n] = 1; }
     const out = []; for (let v = 0; v <= max; v++) if (ok[v]) out.push(v * q); return out;
   }
-  function platesFor(ex, total) {
-    const c = plateCfg(ex); if (!c || total == null) return null;
+  function platesFor(ex, total, perArm) {
+    const c = plateCfg(ex, perArm); if (!c || total == null) return null;
     const side = +((total - c.base) / c.mult).toFixed(3);
     if (side < 0) return { side, list: [], rest: side, c };
     const list = []; let r = side;
@@ -148,18 +149,19 @@
     const stop = pl.c.mult === 2 && pl.c.base ? `<rect x="6" y="${mid - 4}" width="18" height="8" fill="#56647D"/><rect x="20" y="${mid - 16}" width="10" height="32" rx="2" fill="#8995AB"/>` : `<rect x="16" y="${mid - 20}" width="14" height="40" rx="3" fill="#8995AB"/>`;
     return `<svg class="plate-svg" viewBox="0 0 ${end + 4} ${H}" aria-hidden="true">${sleeve}${stop}${parts}</svg>`;
   }
-  function renderPlates(ex, x, prev) {
+  function renderPlates(ex, x, prev, side) {
     const m = meta(ex);
     if (isAssisted(ex) || (m.equip && m.equip.type === 'none')) return '';
-    if (!m.equip) return `<button class="plate-set" data-act="equip">🏋 Disegno dischi · imposta</button>`;
-    const pl = platesFor(ex, x.w);
+    if (!m.equip) return side === 'R' ? '' : `<button class="plate-set" data-act="equip">🏋 Disegno dischi · imposta</button>`;
+    const val = o => o && (side ? (o['w' + side] ?? o.w) : o.w);
+    const pl = platesFor(ex, val(x), !!side);
     if (!pl) return `<button class="plate-set" data-act="equip">🏋 Scrivi il peso per vedere come caricare</button>`;
     const one = pl.c.mult === 1;
-    const lbl = one ? 'SUL LATO' : 'PER LATO';
+    const lbl = side ? (side === 'L' ? 'BRACCIO SINISTRO' : 'BRACCIO DESTRO') : one ? 'SUL LATO' : 'PER LATO';
     const txt = pl.list.length ? pl.list.map(fmt).join(' + ') : 'nessun disco';
     let delta = '';
-    if (prev && prev.w != null) {
-      const pp = platesFor(ex, prev.w); const d = +(pl.side - pp.side).toFixed(2);
+    if (prev && val(prev) != null) {
+      const pp = platesFor(ex, val(prev), !!side); const d = +(pl.side - pp.side).toFixed(2);
       delta = d > 0 ? `Rispetto alla serie prima: aggiungi ${fmt(d)}${one ? '' : ' per lato'}` : d < 0 ? `Rispetto alla serie prima: togli ${fmt(-d)}${one ? '' : ' per lato'}` : 'Stesso carico della serie prima';
     }
     const warn = pl.side < 0 ? `<div class="plate-warn">Il peso è inferiore alla barra (${fmt(pl.c.base)} kg)</div>` : pl.rest > 0.001 ? `<div class="plate-warn">Con i tuoi dischi non si arriva esatti: mancano ${fmt(pl.rest)}${one ? '' : ' per lato'}</div>` : '';
@@ -177,6 +179,7 @@
     if (q.type === 'bar') h += `<div class="row" style="gap:8px;margin:-2px 0 10px 28px;flex-wrap:wrap"><span class="xs sub">Peso barra</span>${[20, 15, 10].map(b => `<button class="chipbtn ${q.bar === b ? 'on' : ''}" data-act="eqbar" data-v="${b}">${b} kg${b === 10 ? ' (EZ)' : ''}</button>`).join('')}<button class="chipbtn ${[20, 15, 10].includes(q.bar) ? '' : 'on'}" data-act="eqbar" data-v="custom">${[20, 15, 10].includes(q.bar) ? 'Altro…' : fmt(q.bar) + ' kg'}</button></div>`;
     h += opt('m2', 'Chest press, hack squat, leg press… dischi su entrambi i lati');
     h += opt('m1', 'T-bar row e macchine caricate da una parte sola');
+    h += `<div class="xs sub" style="margin:-2px 0 10px 28px">Macchine con i bracci indipendenti usate un braccio alla volta: scegli "2 lati" e nel menu ⋯ attiva "Separa lato sinistro e destro": il disegno mostra cosa caricare su ogni braccio.</div>`;
     h += opt('none', 'Pacco pesi a perno, cavi, manubri');
     if (!done && q.type !== 'none') h += `<button class="opt" data-act="eqconv" style="margin-top:6px"><span style="width:18px;font-size:18px">${q.conv ? '☑' : '☐'}</span><div><div style="font-weight:600">Finora ho segnato il peso di un lato</div><div class="xs sub">Converte una volta lo storico in totali (es. 27,5 → ${q.type === 'm1' ? '27,5' : fmt(27.5 * 2 + (q.type === 'bar' ? q.bar : 0))}), così record e suggerimenti restano giusti</div></div></button>`;
     if (done) h += `<div class="xs sub" style="margin:4px 0 10px">Lo storico è già stato convertito in totali.</div>`;
@@ -184,7 +187,7 @@
     sheet(h);
   }
   function ladderFor(ex) {
-    const pc = plateCfg(ex);
+    const pc = plateCfg(ex, meta(ex).unilateral);
     if (pc) return sideSums().map(v => +(pc.base + v * pc.mult).toFixed(2));
     const set = new Set((meta(ex).ladder || []));
     for (const s of S.sessions) {
@@ -1096,8 +1099,7 @@
     const rirSel = x.rir ?? null;
     return `<div class="setcard"><div class="row" style="justify-content:space-between"><span style="font-weight:700">Serie ${i + 1}${slot.sets > 1 ? ' di ' + slot.sets : ''}</span>${badge}</div>
       ${g.why ? `<div class="why">${esc(g.why)}</div>` : ''}
-      ${uni ? stepper('L') + stepper('R') : stepper('')}
-      ${uni ? '' : renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null)}
+      ${uni ? stepper('L') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null, 'L') + stepper('R') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null, 'R') : stepper('') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null)}
       <div class="rir"><span>RIR</span>${[0, 1, 2, 3].map(v => `<button class="${target === v ? 'target' : ''} ${rirSel === v ? 'sel' : ''}" data-act="rir" data-i="${i}" data-v="${v}" aria-pressed="${rirSel === v}">${v === 3 ? '3+' : v}</button>`).join('')}</div>
       <button class="btn dark" data-act="done" data-i="${i}">Fatto${rirSel == null && target != null ? ' · RIR ' + target : ''}</button></div>`;
   }
