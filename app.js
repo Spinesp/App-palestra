@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.5.2';
+  const VERSION = '1.5.3';
 
   // ---------- stato ----------
   let S = load();
@@ -249,10 +249,45 @@
   function ensureEntry(s, si) {
     if (s.entries[si]) return s.entries[si];
     const slot = dayOf(s.week, s.day).slots[si];
-    const en = { sets: [], sub: null, warmDone: false, sessNote: '', tech: null, complete: false };
+    const en = { sets: [], sub: subFor(s, si), warmDone: false, sessNote: '', tech: null, complete: false };
     fillSets(s, si, en);
     s.entries[si] = en;
     return en;
+  }
+  // variante da proporre: quella scelta oggi su un altro esercizio uguale, altrimenti quella dell'ultima volta
+  function subFor(s, si) {
+    const day = dayOf(s.week, s.day); const slot = day.slots[si];
+    for (const k of Object.keys(s.entries)) { if (day.slots[k] && day.slots[k].ex === slot.ex) return s.entries[k].sub || null; }
+    const list = doneSessions();
+    let any;
+    for (let j = list.length - 1; j >= 0; j--) {
+      const ss = list[j]; const d = dayOf(ss.week, ss.day); if (!d) continue;
+      for (const [k, e] of Object.entries(ss.entries || {})) {
+        const sl = d.slots[k]; if (!sl || sl.ex !== slot.ex || !(e.sets || []).some(x => x.done)) continue;
+        if (sl.range === slot.range) return e.sub || null;
+        if (any === undefined) any = e.sub || null;
+      }
+      if (any !== undefined) return any;
+    }
+    return null;
+  }
+  // varianti scritte a mano già usate per questo esercizio
+  function customSubs(ex) {
+    const known = new Set(((CAT[ex] || {}).subs || []).map(x => x.name));
+    const out = [];
+    for (const ss of S.sessions) { const d = dayOf(ss.week, ss.day); if (!d) continue;
+      for (const [k, e] of Object.entries(ss.entries || {})) { const sl = d.slots[k];
+        if (sl && sl.ex === ex && e.sub && !known.has(e.sub) && !out.includes(e.sub)) out.push(e.sub); } }
+    return out;
+  }
+  // applica la variante anche agli altri esercizi uguali di oggi non ancora iniziati
+  function applySub(s, si, sub) {
+    const day = dayOf(s.week, s.day); const ex = day.slots[si].ex; let n = 0;
+    const en = ensureEntry(s, si); en.sub = sub; fillSets(s, si, en); en.tech = null;
+    for (const k of s.seq) { if (k === si || day.slots[k].ex !== ex) continue;
+      const e = s.entries[k]; if (e && e.sets.some(x => x.done)) continue;
+      if (e) { e.sub = sub; fillSets(s, k, e); e.tech = null; } n++; }
+    if (n) toast('Applicata anche a ' + n + (n > 1 ? ' altri esercizi uguali' : ' altro esercizio uguale') + ' di oggi');
   }
   function fillSets(s, si, en) {
     const slot = dayOf(s.week, s.day).slots[si];
@@ -1276,6 +1311,7 @@
     let h = `<h3>Sostituisci esercizio</h3><div class="small sub" style="margin:-6px 0 12px">Ogni variante ha il suo storico e i suoi record.</div>`;
     h += `<button class="opt" data-act="subpick" data-v="">${!en.sub ? '● ' : ''}${esc(exName(slot.ex))} <span class="xs sub">(originale)</span></button>`;
     for (const x of subs) h += `<button class="opt" data-act="subpick" data-v="${esc(x.name)}">${en.sub === x.name ? '● ' : ''}${esc(exName(x.name))}</button>`;
+    for (const x of customSubs(slot.ex)) h += `<button class="opt" data-act="subpick" data-v="${esc(x)}">${en.sub === x ? '● ' : ''}${esc(exName(x))} <span class="xs sub">(tua)</span></button>`;
     h += `<button class="opt" data-act="subcustom">+ Un altro esercizio…</button>`;
     sheet(h);
   }
@@ -1334,10 +1370,10 @@
         [o[p], o[q]] = [o[q], o[p]]; save(); listSheet(); render(); return true;
       }
       case 'subpick': {
-        en.sub = el.dataset.v || null; fillSets(s, s.cur, en); en.tech = null; closeSheet(); save(); render(); return true;
+        closeSheet(); applySub(s, s.cur, el.dataset.v || null); save(); render(); return true;
       }
       case 'subcustom': {
-        askInput('Nome dell\'esercizio sostitutivo', '').then(n => { if (!n || !n.trim()) return; en.sub = n.trim(); fillSets(s, s.cur, en); save(); render(); });
+        askInput('Nome dell\'esercizio sostitutivo', '').then(n => { if (!n || !n.trim()) return; applySub(s, s.cur, n.trim()); save(); render(); });
         return true;
       }
       case 'rename': { askInput('Nuovo nome per ' + ex, exName(ex)).then(n => { if (n == null) return; meta(ex).alias = n.trim() || null; save(); render(); }); return true; }
