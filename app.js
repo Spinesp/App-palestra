@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.1';
+  const VERSION = '1.6.2';
 
   // ---------- stato ----------
   let S = load();
@@ -85,6 +85,11 @@
       }
     }
     return out;
+  }
+  function bestAt(list, i) {
+    let best = null;
+    for (const p of list) { const x = p.sets[i] || p.sets[p.sets.length - 1]; if (x && x.r != null && (!best || e1x(p.ex, x.w, x.r) > e1x(p.ex, best.w, best.r))) best = x; }
+    return best;
   }
   function bestOf(list) {
     let best = null;
@@ -239,7 +244,7 @@
     if (!list.length) return { w: null, r: slot.lo, rir, why: 'Prima volta: scegli un carico con cui arrivi a ' + slot.range + ' rip.' };
     const lastP = list[list.length - 1];
     const last = lastP.sets[i] || lastP.sets[lastP.sets.length - 1];
-    const best = bestOf(list);
+    const best = bestAt(list, i);   // record della stessa serie (la 2ª si confronta con le 2ª serie)
     const lo = slot.lo, hi = slot.hi;
     if (last.w == null) return { w: null, r: Math.min(hi, (last.r || lo) + 1), rir, why: 'Aggiungi una ripetizione rispetto all\'ultima volta.' };
     if (isAssisted(ex)) return suggestAssisted(ex, list, last, best, lo, hi, rir);
@@ -281,9 +286,30 @@
     return { w: last.w, r: Math.min(hi, last.r + 1), rir, why: 'Stessa assistenza, una ripetizione in più verso ' + hi + '.' };
   }
   // obiettivo per la serie i con il peso scelto ora: stesso "sforzo" del suggerimento, ripetizioni ricalcolate
-  function targetFor(slot, i, sub, w) {
+  // obiettivo della serie i tenendo conto delle serie già fatte oggi: se una serie precedente è andata
+  // sotto l'obiettivo, quello della serie i si abbassa nella stessa proporzione (mai alzato)
+  function suggestToday(slot, i, en) {
+    const g = suggest(slot, i, en && en.sub);
+    if (!en || i === 0 || g.w == null || g.r == null) return g;
+    const ex = en.sub || slot.ex;
+    if (!g.w && !isAssisted(ex)) return g;
+    for (let j = i - 1; j >= 0; j--) {
+      const x = en.sets[j]; if (!x || !x.done || x.r == null) continue;
+      const plan = suggest(slot, j, en.sub); if (plan.w == null || plan.r == null || (!plan.w && !isAssisted(ex))) return g;
+      const ratio = e1x(ex, x.w, x.r) / e1x(ex, plan.w, plan.r);
+      if (!(ratio < 0.995)) return g;
+      let w = g.w, up = g.up;
+      const repsAt = ww => Math.max(1, Math.round(30 * (e1x(ex, g.w, g.r) * ratio / loadOf(ex, ww) - 1)));
+      let r = repsAt(w);
+      if (up && r < slot.lo) { const prevW = isAssisted(ex) ? weightUp(ex, w) : weightDown(ex, w); if (prevW !== w && loadOf(ex, prevW) > 0) { w = prevW; r = repsAt(w); up = false; } }
+      if (r >= g.r && w === g.w) return g;
+      return { w, r, rir: g.rir, up: false, why: 'La serie ' + (j + 1) + ' di oggi è andata sotto l\'obiettivo (' + wtx(ex, x.w) + ' × ' + x.r + ' invece di ' + wtx(ex, plan.w) + ' × ' + plan.r + '): obiettivo abbassato in proporzione.' };
+    }
+    return g;
+  }
+  function targetFor(slot, i, sub, w, en) {
     const ex = sub || slot.ex;
-    const g = suggest(slot, i, sub);
+    const g = en ? suggestToday(slot, i, en) : suggest(slot, i, sub);
     if (g.w == null || g.r == null || w == null) return null;
     if (w === g.w) return { w, r: g.r, rir: g.rir, same: true };
     const L = loadOf(ex, w), E = e1x(ex, g.w, g.r);
@@ -292,7 +318,7 @@
     return { w, r, rir: g.rir, same: false };
   }
   function retarget(slot, en, i) {
-    const x = en.sets[i]; const t = targetFor(slot, i, en.sub, x.w);
+    const x = en.sets[i]; const t = targetFor(slot, i, en.sub, x.w, en);
     if (t) x.r = t.r;
   }
   function fatigue(key) {
@@ -429,6 +455,12 @@
     set.done = true; set.ts = Date.now();
     if (set.w != null) { const m = meta(en.sub || slot.ex); m.ladder = [...new Set([...(m.ladder || []), set.w])]; }
     unlockAudio();
+    // le serie successive ancora come da suggerimento si adeguano a com'è andata questa
+    for (let k = i + 1; k < en.sets.length; k++) {
+      const y = en.sets[k]; if (y.done) continue;
+      const base = suggest(slot, k, en.sub); if (y.w !== base.w || y.r !== base.r) continue;
+      const adj = suggestToday(slot, k, en); y.w = adj.w; y.r = adj.r;
+    }
     // superserie: passa al compagno senza recupero
     if (slot.group) {
       const mates = s.seq.filter(x => day.slots[x].group === slot.group);
@@ -1080,10 +1112,10 @@
   }
   function renderSetCard(s, si, slot, en, i, ex) {
     const x = en.sets[i];
-    const g = suggest(slot, i, en.sub);
+    const g = suggestToday(slot, i, en);
     const target = slot.rir[i];
     const uni = meta(ex).unilateral;
-    const tgt = targetFor(slot, i, en.sub, x.w);
+    const tgt = targetFor(slot, i, en.sub, x.w, en);
     if (tgt && !tgt.same) {
       g.w = tgt.w; g.r = tgt.r; g.up = false;
       g.why = 'Peso cambiato: con ' + (isAssisted(ex) ? 'assistenza ' : '') + fmt(tgt.w) + ' kg l\'obiettivo equivalente è ' + tgt.r + ' ripetizioni.';
