@@ -238,3 +238,7 @@ button.note{width:100%;text-align:left;color:inherit}
 .choice button.on{border:2px solid var(--day);background:#EEF2F8}
 .choice .k{font-size:11px;font-weight:800;letter-spacing:.05em;color:#4A5568}
 .choice .num{font-family:var(--cond);font-weight:800;font-size:22px}
+/* scelta per la prossima volta dopo un aumento di peso */
+.nextask{margin:-2px 0 8px;padding:10px 12px;border-radius:14px;background:var(--card);display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--sub)}
+.nextask button{flex:1;min-height:44px;border-radius:12px;border:1.5px dashed var(--dash);color:#fff;font-weight:700;font-size:14px}
+.nextask button.on{background:#fff;color:var(--bg);border:0}

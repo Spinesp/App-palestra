@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.4';
+  const VERSION = '1.6.5';
 
   // ---------- stato ----------
   let S = load();
@@ -247,6 +247,10 @@
     const best = bestAt(list, i);   // record della stessa serie (la 2ª si confronta con le 2ª serie)
     const lo = slot.lo, hi = slot.hi;
     if (last.w == null) return { w: null, r: Math.min(hi, (last.r || lo) + 1), rir, why: 'Aggiungi una ripetizione rispetto all\'ultima volta.' };
+    if (last.next === 'back' && last.prevW != null) {
+      const r = (last.prevR || lo) + 1;
+      return { w: last.prevW, r, rir, why: 'L\'ultima volta hai provato ' + fmt(last.w) + ' kg × ' + last.r + ' e hai scelto di tornare a ' + fmt(last.prevW) + ' kg: una ripetizione in più rispetto a prima.', alt: { w: last.w, r: last.r + 1, lbl: 'Resta a ' + fmt(last.w) } };
+    }
     if (isAssisted(ex)) return suggestAssisted(ex, list, last, best, lo, hi, rir);
     if (last.r >= hi) {
       if (last.w === 0) return { w: 0, r: last.r + 1, rir, why: 'A corpo libero: una ripetizione in più.' };
@@ -469,6 +473,12 @@
     set.done = true; set.ts = Date.now();
     if (set.w != null) { const m = meta(en.sub || slot.ex); m.ladder = [...new Set([...(m.ladder || []), set.w])]; }
     unlockAudio();
+    delete set.askNext; delete set.next; delete set.prevW; delete set.prevR;
+    if (!isAssisted(en.sub || slot.ex) && set.w) {
+      const lp = perfs(keyOf(slot, en.sub)).slice(-1)[0];
+      const ls = lp && (lp.sets[i] || lp.sets[lp.sets.length - 1]);
+      if (ls && ls.w != null && set.w > ls.w && set.r >= slot.lo) { set.askNext = true; set.next = 'keep'; set.prevW = ls.w; set.prevR = ls.r; }
+    }
     // le serie successive ancora come da suggerimento si adeguano a com'è andata questa
     for (let k = i + 1; k < en.sets.length; k++) {
       const y = en.sets[k]; if (y.done) continue;
@@ -1061,6 +1071,7 @@
       if (x.done) {
         const isRec = best && x === best;
         h += `<button class="setrow done" data-act="reopen" data-v="${i}"><span class="lbl">Serie ${i + 1}</span><span class="num">${wtx(ex, x.w)} × ${x.r}${x.rir != null ? ' · RIR ' + x.rir : ''}</span>${isRec ? '<span class="pill" style="background:var(--gold);color:var(--bg);padding:2px 8px">REC</span>' : ''}${ICON.check}</button>`;
+        if (x.askNext) h += `<div class="nextask"><span>Prossima volta, serie ${i + 1}:</span><div class="row" style="gap:8px"><button class="${x.next !== 'back' ? 'on' : ''}" data-act="nextpick" data-i="${i}" data-v="keep">Tieni ${fmt(x.w)} kg</button><button class="${x.next === 'back' ? 'on' : ''}" data-act="nextpick" data-i="${i}" data-v="back">Torna a ${fmt(x.prevW)} kg</button></div></div>`;
       } else if (i === nowIdx) {
         h += renderSetCard(s, si, slot, en, i, ex);
       } else {
@@ -1355,6 +1366,11 @@
       case 'slot': goSlot(+v); break;
       case 'finish': finishSession(); break;
       case 'list': listSheet(); break;
+      case 'nextpick': {
+        const en = ensureEntry(s, s.cur); const x = en.sets[+el.dataset.i]; x.next = v; save(); render();
+        toast(v === 'back' ? 'La prossima volta riparti da ' + fmt(x.prevW) + ' kg' : 'La prossima volta resti a ' + fmt(x.w) + ' kg');
+        break;
+      }
       case 'pickopt': {
         const en = ensureEntry(s, s.cur); const x = en.sets[+el.dataset.i];
         x.w = +el.dataset.w; x.r = +el.dataset.r; save(); render(); break;
