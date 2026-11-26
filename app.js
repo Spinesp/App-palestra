@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.3';
+  const VERSION = '1.6.4';
 
   // ---------- stato ----------
   let S = load();
@@ -250,12 +250,25 @@
     if (isAssisted(ex)) return suggestAssisted(ex, list, last, best, lo, hi, rir);
     if (last.r >= hi) {
       if (last.w === 0) return { w: 0, r: last.r + 1, rir, why: 'A corpo libero: una ripetizione in più.' };
+      // range chiuso: due strade (salire di peso o aggiungere una ripetizione). Consiglia quella giusta
+      // in base alle ripetizioni previste al peso nuovo con la forza dell'ultima volta; l'altra resta sceglibile.
       const next = weightUp(ex, last.w);
-      const jump = (next - last.w) / last.w;
-      if (jump <= 0.12 || last.r >= hi + 3) {
-        return { w: next, r: lo, rir, up: true, why: 'L\'ultima volta hai chiuso il range (' + last.r + ' rip): sali di peso e riparti da ' + lo + '.' };
+      const repsAt = (E, w) => Math.max(1, Math.round(30 * (E / w - 1)));
+      // forza di riferimento: l'ultima volta o il migliore di tutte le serie, se più alto
+      const top = bestOf(list);
+      const Eref = Math.max(e1(last.w, last.r), top && top.w ? e1(top.w, top.r) : 0);
+      const pr = repsAt(Eref, next);
+      const pct = Math.round((next - last.w) / last.w * 100);
+      if (pr >= lo || last.r >= hi + 6) {
+        const g = { w: next, r: Math.max(lo, Math.min(pr, hi)), rir, up: true };
+        g.why = 'Hai chiuso il range (' + last.r + ' rip). A ' + fmt(next) + ' kg (+' + pct + '%) dovresti fare circa ' + pr + ' rip, dentro il range: consiglio di salire.';
+        g.alt = { w: last.w, r: last.r + 1, lbl: 'Resta a ' + fmt(last.w) };
+        return g;
       }
-      return { w: last.w, r: last.r + 1, rir, why: 'Il peso successivo (' + fmt(next) + ' kg) è un salto grande: prima aggiungi una ripetizione.' };
+      const g = { w: last.w, r: last.r + 1, rir };
+      g.why = 'Hai chiuso il range (' + last.r + ' rip), ma a ' + fmt(next) + ' kg (+' + pct + '%) faresti circa ' + pr + ' rip, sotto ' + lo + ': consiglio di restare e aggiungere una ripetizione.';
+      g.alt = { w: next, r: repsAt(e1(g.w, g.r), next), lbl: 'Sali a ' + fmt(next) };
+      return g;
     }
     if (!last.w) {
       // corpo libero: si confronta solo con le serie a corpo libero
@@ -312,6 +325,7 @@
     const g = en ? suggestToday(slot, i, en) : suggest(slot, i, sub);
     if (g.w == null || g.r == null || w == null) return null;
     if (w === g.w) return { w, r: g.r, rir: g.rir, same: true };
+    if (g.alt && w === g.alt.w) return { w, r: g.alt.r, rir: g.rir, same: false, alt: true };
     const L = loadOf(ex, w), E = e1x(ex, g.w, g.r);
     if (!(L > 0) || (!g.w && !isAssisted(ex))) return null;
     const r = Math.max(1, Math.min(slot.hi + 4, Math.round(30 * (E / L - 1))));
@@ -1118,7 +1132,8 @@
     const tgt = targetFor(slot, i, en.sub, x.w, en);
     if (tgt && !tgt.same) {
       g.w = tgt.w; g.r = tgt.r; g.up = false;
-      g.why = 'Peso cambiato: con ' + (isAssisted(ex) ? 'assistenza ' : '') + fmt(tgt.w) + ' kg l\'obiettivo equivalente è ' + tgt.r + ' ripetizioni.';
+      if (tgt.alt) g.why = 'Hai scelto l\'alternativa: ' + fmt(tgt.w) + ' kg × ' + tgt.r + '.';
+      else g.why = 'Peso cambiato: con ' + (isAssisted(ex) ? 'assistenza ' : '') + fmt(tgt.w) + ' kg l\'obiettivo equivalente è ' + tgt.r + (tgt.r === 1 ? ' ripetizione.' : ' ripetizioni.');
     }
     const badge = g.w != null || g.r != null ? `<span class="sugg ${g.up ? '' : 'keep'}">${g.up ? '↑ prova' : 'obiettivo'} ${isAssisted(ex) ? (g.w ? 'ass. ' + fmt(g.w) + ' kg × ' : 'senza assist. × ') : (g.w ? fmt(g.w) + ' kg × ' : '')}${g.r}${g.rir != null ? ' · RIR ' + g.rir : ''}</span>` : '';
     const stepper = (side) => {
@@ -1131,6 +1146,8 @@
     const rirSel = x.rir ?? null;
     return `<div class="setcard"><div class="row" style="justify-content:space-between"><span style="font-weight:700">Serie ${i + 1}${slot.sets > 1 ? ' di ' + slot.sets : ''}</span>${badge}</div>
       ${g.why ? `<div class="why">${esc(g.why)}</div>` : ''}
+      ${g.alt && !uni ? (() => { const sg = suggest(slot, i, en.sub); const rec = { w: sg.w, r: sg.r }; const isRec = x.w === rec.w; const isAlt = x.w === g.alt.w;
+        return `<div class="choice"><button class="${isRec ? 'on' : ''}" data-act="pickopt" data-i="${i}" data-w="${rec.w}" data-r="${rec.r}"><span class="k">★ CONSIGLIATO</span><span class="num">${fmt(rec.w)} kg × ${rec.r}</span></button><button class="${isAlt ? 'on' : ''}" data-act="pickopt" data-i="${i}" data-w="${g.alt.w}" data-r="${g.alt.r}"><span class="k">${esc(g.alt.lbl.toUpperCase())}</span><span class="num">${fmt(g.alt.w)} kg × ${g.alt.r}</span></button></div>`; })() : ''}
       ${uni ? stepper('L') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null, 'L') + stepper('R') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null, 'R') : stepper('') + renderPlates(ex, x, i > 0 ? en.sets[i - 1] : null)}
       <div class="rir"><span>RIR</span>${[0, 1, 2, 3].map(v => `<button class="${target === v ? 'target' : ''} ${rirSel === v ? 'sel' : ''}" data-act="rir" data-i="${i}" data-v="${v}" aria-pressed="${rirSel === v}">${v === 3 ? '3+' : v}</button>`).join('')}</div>
       <button class="btn dark" data-act="done" data-i="${i}">Fatto${rirSel == null && target != null ? ' · RIR ' + target : ''}</button></div>`;
@@ -1338,6 +1355,10 @@
       case 'slot': goSlot(+v); break;
       case 'finish': finishSession(); break;
       case 'list': listSheet(); break;
+      case 'pickopt': {
+        const en = ensureEntry(s, s.cur); const x = en.sets[+el.dataset.i];
+        x.w = +el.dataset.w; x.r = +el.dataset.r; save(); render(); break;
+      }
       case 'w': case 'r': {
         const en = ensureEntry(s, s.cur); const i = +el.dataset.i; const side = el.dataset.s; const x = en.sets[i];
         const slot = dayOf(s.week, s.day).slots[s.cur]; const ex = en.sub || slot.ex;

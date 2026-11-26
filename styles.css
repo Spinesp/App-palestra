@@ -232,3 +232,9 @@ button.note{width:100%;text-align:left;color:inherit}
 .plate-warn{font-size:12px;font-weight:700;color:#B42318}
 .chipbtn{min-height:40px;padding:0 12px;border-radius:20px;border:1.5px solid var(--dash);font-weight:700;font-size:14px}
 .chipbtn.on{background:#fff;color:var(--bg);border-color:#fff}
+/* scelta tra salire di peso e aggiungere ripetizioni */
+.choice{display:flex;gap:8px}
+.choice button{flex:1;min-height:56px;border-radius:14px;border:1.5px dashed #B9C2D0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--bg)}
+.choice button.on{border:2px solid var(--day);background:#EEF2F8}
+.choice .k{font-size:11px;font-weight:800;letter-spacing:.05em;color:#4A5568}
+.choice .num{font-family:var(--cond);font-weight:800;font-size:22px}
