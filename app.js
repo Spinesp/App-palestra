@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.2';
+  const VERSION = '1.6.3';
 
   // ---------- stato ----------
   let S = load();
@@ -1442,6 +1442,26 @@
     });
     sheet(h);
   }
+  // sposta tutto lo storico registrato con un nome su un'altra variante (es. segnato Cable Crunch, fatto Machine Crunch)
+  function moveHist(from, to) {
+    let n = 0;
+    for (const ss of S.sessions) { const d = dayOf(ss.week, ss.day); if (!d) continue;
+      for (const [k, e] of Object.entries(ss.entries || {})) { const sl = d.slots[k]; if (!sl || (e.sub || sl.ex) !== from) continue;
+        e.sub = sl.ex === to ? null : to; if (ss.status === 'done') n++;
+        if (ss.status === 'active' && !e.sets.some(x => x.done)) fillSets(ss, +k, e); } }
+    const a = meta(from), b = meta(to);
+    for (const f of ['myNote', 'ladder', 'equip', 'unilateral', 'assisted']) if (a[f] != null && b[f] == null) b[f] = a[f];
+    if (S.since) for (const key of Object.keys(S.since)) if (key.startsWith(from + '|')) { S.since[to + key.slice(from.length)] = S.since[key]; delete S.since[key]; }
+    return n;
+  }
+  function histSheet() {
+    const s = activeSession(); const slot = dayOf(s.week, s.day).slots[s.cur]; const en = ensureEntry(s, s.cur); const cur = en.sub || slot.ex;
+    const names = [slot.ex, ...((CAT[slot.ex] || {}).subs || []).map(x => x.name), ...customSubs(slot.ex)].filter((x, i, a) => x !== cur && a.indexOf(x) === i);
+    let h = `<h3>Lo storico era con un'altra variante</h3><div class="small sub" style="margin:-6px 0 12px">Tutte le serie registrate come <b>${esc(exName(cur))}</b> passano alla variante che scegli, con record e suggerimenti. Da oggi l'esercizio parte con quella.</div>`;
+    for (const x of names) h += `<button class="opt" data-act="histmove" data-v="${esc(x)}">${esc(exName(x))}${x === slot.ex ? ' <span class="xs sub">(originale)</span>' : ''}</button>`;
+    h += `<button class="opt" data-act="histcustom">+ Un altro esercizio…</button>`;
+    sheet(h);
+  }
   function subsSheet() {
     const s = activeSession(); const slot = dayOf(s.week, s.day).slots[s.cur]; const en = ensureEntry(s, s.cur);
     const subs = (CAT[slot.ex] || {}).subs || [];
@@ -1461,6 +1481,7 @@
       <button class="opt" data-act="uni">${m.unilateral ? '✓ ' : ''}Separa lato sinistro e destro</button>
       <button class="opt" data-act="assist">${isAssisted(ex) ? '✓ ' : ''}I kg sono assistenza della macchina</button>
       <button class="opt" data-act="equip">Attrezzo e disegno dischi: ${m.equip ? EQUIP[m.equip.type] + (m.equip.type === 'bar' ? ' ' + fmt(m.equip.bar) + ' kg' : '') : 'non impostato'}</button>
+      <button class="opt" data-act="histsheet">Lo storico finora era con un'altra variante…</button>
       <button class="opt" data-act="tolast">Fallo per ultimo (macchina occupata)</button>
       <button class="opt" data-act="refill">Ricalcola i suggerimenti per le serie da fare</button>`);
   }
@@ -1518,6 +1539,18 @@
       case 'eqsave': {
         const q = eqDraft; setEquip(q.ex, q); eqDraft = null; closeSheet(); save(); render();
         toast(q.type === 'none' ? 'Nessun disegno per questo esercizio' : (q.conv && meta(q.ex).equip.conv ? 'Storico convertito in pesi totali' : 'Attrezzo salvato'));
+        return true;
+      }
+      case 'histsheet': histSheet(); return true;
+      case 'histmove': case 'histcustom': {
+        const from = ex;
+        const go = to => { if (!to || to === from) return;
+          ask('Spostare lo storico?', 'Le serie registrate come ' + exName(from) + ' diventano ' + exName(to) + '.', 'Sposta').then(ok => {
+            if (!ok) { closeSheet(); return; }
+            const n = moveHist(from, to); closeSheet(); save(); render();
+            toast(n + (n === 1 ? ' allenamento spostato' : ' allenamenti spostati') + ' su ' + exName(to), 'Annulla', () => { moveHist(to, from); save(); render(); });
+          }); };
+        if (a === 'histmove') go(el.dataset.v); else askInput('Nome della variante', '').then(t => go(t && t.trim()));
         return true;
       }
       case 'subpick': {
