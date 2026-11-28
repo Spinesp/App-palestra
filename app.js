@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.6';
+  const VERSION = '1.6.7';
 
   // ---------- stato ----------
   let S = load();
@@ -137,9 +137,14 @@
     const raw = { mult: 1, base: 0 };
     m.equip = { type: q.type, bar: q.type === 'bar' ? q.bar : undefined, conv: !!(old && old.conv) };
     const newC = plateCfg(ex);
-    if (!m.equip.conv && q.conv && newC) { convertHist(ex, raw, newC); m.equip.conv = true; m.equip.convAt = Date.now(); }
-    else if (old && old.convAt) m.equip.convAt = old.convAt;
-    else if (m.equip.conv && oldC && newC && (oldC.mult !== newC.mult || oldC.base !== newC.base)) convertHist(ex, oldC, newC);
+    if (old && old.convAt) m.equip.convAt = old.convAt;
+    if (old && old.convCfg) m.equip.convCfg = old.convCfg;
+    if (!m.equip.conv && q.conv && newC) { convertHist(ex, raw, newC); m.equip.conv = true; m.equip.convAt = Date.now(); m.equip.convCfg = newC; }
+    else if (m.equip.conv) {
+      const from = (old && old.convCfg) || oldC;
+      if (from && newC && (from.mult !== newC.mult || from.base !== newC.base)) { convertHist(ex, from, newC); m.equip.convCfg = newC; }
+      else if (from && !m.equip.convCfg) m.equip.convCfg = from;   // passando a "nessun disegno" si ricorda com'era convertito
+    }
   }
   // annulla la conversione "un lato → totale" fatta per sbaglio (le serie registrate dopo restano come sono)
   function keyOfEx(ex) {
@@ -147,11 +152,12 @@
     const d = dayOf(s.week, s.day); const k = Object.keys(s.entries).find(k => d.slots[k] && (s.entries[k].sub || d.slots[k].ex) === ex);
     return k != null ? keyOf(d.slots[k], s.entries[k].sub) : ex + '|';
   }
-  function unconvert(ex) {
-    const m = meta(ex); const c = plateCfg(ex); if (!m.equip || !m.equip.conv || !c) return false;
+  const cfgOf = q => q.type === 'bar' ? { mult: 2, base: q.bar || 0 } : q.type === 'm2' ? { mult: 2, base: 0 } : q.type === 'm1' ? { mult: 1, base: 0 } : null;
+  function unconvert(ex, c) {
+    const m = meta(ex); if (!m.equip || !m.equip.conv || !c) return false;
     const at = m.equip.convAt;
     convertHist(ex, c, { mult: 1, base: 0 }, x => x.done && x.ts && at && x.ts > at);
-    m.equip.conv = false; delete m.equip.convAt;
+    m.equip.conv = false; delete m.equip.convAt; delete m.equip.convCfg;
     const s = activeSession();
     if (s) { const d = dayOf(s.week, s.day); for (const [k, e] of Object.entries(s.entries)) { const sl = d.slots[k]; if (sl && (e.sub || sl.ex) === ex) e.sets.forEach((x, i) => { if (!x.done) { const g = suggest(sl, i, e.sub); x.w = g.w; x.r = g.r; } }); } }
     return true;
@@ -1595,11 +1601,14 @@
         return true;
       }
       case 'equndo': {
-        const exq = eqDraft.ex; const c = plateCfg(exq); const b = bestOf(perfs(keyOfEx(exq)));
+        const exq = eqDraft.ex; const mq = meta(exq).equip || {};
+        const c = mq.convCfg || plateCfg(exq) || cfgOf(eqDraft);
+        if (!c) { toast('Seleziona l\'attrezzo che avevi scelto quella volta (es. Bilanciere 10 kg), poi tocca di nuovo'); return true; }
+        const b = bestOf(perfs(keyOfEx(exq)));
         const back = w => fmt(+((w - c.base) / c.mult).toFixed(2));
         ask('Annullare la conversione?', 'I pesi registrati tornano com\'erano prima' + (b && b.w ? ' (es. record ' + fmt(b.w) + ' × ' + b.r + ' → ' + back(b.w) + ' × ' + b.r + ')' : '') + '. Poi scegli di nuovo l\'attrezzo giusto.', 'Annulla conversione').then(ok => {
           if (!ok) { equipSheet(exq); return; }
-          unconvert(exq); save(); render(); eqDraft = null; equipSheet(exq);
+          unconvert(exq, c); save(); render(); eqDraft = null; equipSheet(exq);
           toast('Storico riportato ai pesi di prima');
         });
         return true;
