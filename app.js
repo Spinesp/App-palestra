@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.7';
+  const VERSION = '1.6.8';
 
   // ---------- stato ----------
   let S = load();
@@ -1688,6 +1688,18 @@
 
   // avvio: se c'è un allenamento in corso, riparte da lì
   if (S && activeSession()) view = 'workout';
+  // correzione una tantum (1.6.8): esercizi convertiti per sbaglio in "peso totale" e poi impostati su
+  // "nessun disegno" con una versione che non ricordava la conversione. Per l'EZ-bar la conversione era
+  // fatta con barra da 10 kg (valore predefinito): si torna ai pesi di prima.
+  if (S && S.meta && !S.fix168) {
+    let fixed = 0;
+    for (const [ex, m] of Object.entries(S.meta)) {
+      const q = m.equip;
+      if (q && q.conv && q.type === 'none' && !q.convCfg && /EZ/i.test(ex)) { unconvert(ex, { mult: 2, base: 10 }); fixed++; }
+    }
+    S.fix168 = true; save();
+    if (fixed) setTimeout(() => toast('Pesi del Cheat Curl riportati a com\'erano prima'), 600);
+  }
   render();
   if (S && activeSession() && activeSession().rest) ensureTick();
   // cronometro dell'allenamento: aggiorna solo il numero, ogni secondo
