@@ -4,7 +4,7 @@
   const SEED = window.SEED || null;   // presente solo nell'anteprima privata; su GitHub i dati si caricano da file
   let P = null, CAT = null;
   const KEY = 'apppalestra.v1';
-  const VERSION = '1.6.5';
+  const VERSION = '1.6.6';
 
   // ---------- stato ----------
   let S = load();
@@ -123,11 +123,11 @@
     return { side, list, rest: r, c };
   }
   // converte i pesi già registrati di un esercizio da una configurazione all'altra (es. da "un lato" a totale)
-  function convertHist(ex, from, to) {
+  function convertHist(ex, from, to, skip) {
     const f = w => w == null ? w : +((((w - from.base) / from.mult) * to.mult) + to.base).toFixed(2);
     for (const ss of S.sessions) { const d = dayOf(ss.week, ss.day); if (!d) continue;
       for (const [k, e] of Object.entries(ss.entries || {})) { const sl = d.slots[k]; if (!sl || (e.sub || sl.ex) !== ex) continue;
-        for (const x of e.sets || []) { x.w = f(x.w); if (x.wL != null) x.wL = f(x.wL); if (x.wR != null) x.wR = f(x.wR); }
+        for (const x of e.sets || []) { if (skip && skip(x)) continue; x.w = f(x.w); if (x.wL != null) x.wL = f(x.wL); if (x.wR != null) x.wR = f(x.wR); }
         if (e.tech && e.tech.steps) e.tech.steps.forEach(t => { t.w = f(t.w); });
         if (e.recordNew && e.recordNew.w != null) e.recordNew.w = f(e.recordNew.w); } }
     const m = meta(ex); if (m.ladder) m.ladder = m.ladder.map(f);
@@ -137,8 +137,24 @@
     const raw = { mult: 1, base: 0 };
     m.equip = { type: q.type, bar: q.type === 'bar' ? q.bar : undefined, conv: !!(old && old.conv) };
     const newC = plateCfg(ex);
-    if (!m.equip.conv && q.conv && newC) { convertHist(ex, raw, newC); m.equip.conv = true; }
+    if (!m.equip.conv && q.conv && newC) { convertHist(ex, raw, newC); m.equip.conv = true; m.equip.convAt = Date.now(); }
+    else if (old && old.convAt) m.equip.convAt = old.convAt;
     else if (m.equip.conv && oldC && newC && (oldC.mult !== newC.mult || oldC.base !== newC.base)) convertHist(ex, oldC, newC);
+  }
+  // annulla la conversione "un lato → totale" fatta per sbaglio (le serie registrate dopo restano come sono)
+  function keyOfEx(ex) {
+    const s = activeSession(); if (!s) return ex + '|';
+    const d = dayOf(s.week, s.day); const k = Object.keys(s.entries).find(k => d.slots[k] && (s.entries[k].sub || d.slots[k].ex) === ex);
+    return k != null ? keyOf(d.slots[k], s.entries[k].sub) : ex + '|';
+  }
+  function unconvert(ex) {
+    const m = meta(ex); const c = plateCfg(ex); if (!m.equip || !m.equip.conv || !c) return false;
+    const at = m.equip.convAt;
+    convertHist(ex, c, { mult: 1, base: 0 }, x => x.done && x.ts && at && x.ts > at);
+    m.equip.conv = false; delete m.equip.convAt;
+    const s = activeSession();
+    if (s) { const d = dayOf(s.week, s.day); for (const [k, e] of Object.entries(s.entries)) { const sl = d.slots[k]; if (sl && (e.sub || sl.ex) === ex) e.sets.forEach((x, i) => { if (!x.done) { const g = suggest(sl, i, e.sub); x.w = g.w; x.r = g.r; } }); } }
+    return true;
   }
   // disegno del lato da caricare
   const PLATE = { 25: ['#E5484D', 84, 15], 20: ['#3B82F6', 84, 14], 15: ['#F5C542', 76, 13], 10: ['#22A55B', 66, 12], 5: ['#E8EDF5', 50, 10], 2.5: ['#E5484D', 38, 9], 1.25: ['#B9C2D0', 30, 8] };
@@ -176,7 +192,7 @@
   let eqDraft = null;
   function equipSheet(ex) {
     const m = meta(ex);
-    if (!eqDraft) eqDraft = { ex, type: (m.equip && m.equip.type) || 'bar', bar: (m.equip && m.equip.bar) || (/EZ/i.test(ex) ? 10 : 20), conv: !(m.equip && m.equip.conv) };
+    if (!eqDraft) eqDraft = { ex, type: (m.equip && m.equip.type) || 'bar', bar: (m.equip && m.equip.bar) || (/EZ/i.test(ex) ? 10 : 20), conv: false };
     const q = eqDraft; const done = m.equip && m.equip.conv;
     const opt = (t, d) => `<button class="opt" data-act="eqtype" data-v="${t}" aria-pressed="${q.type === t}"><span style="width:18px">${q.type === t ? '●' : '○'}</span><div><div style="font-weight:600">${EQUIP[t]}</div><div class="xs sub">${d}</div></div></button>`;
     let h = `<h3>Attrezzo · ${esc(exName(ex))}</h3><div class="small sub" style="margin:-6px 0 12px">Da ora i kg di questo esercizio sono il <b>peso totale</b>; il disegno ti dice come caricarlo.</div>`;
@@ -187,7 +203,7 @@
     h += `<div class="xs sub" style="margin:-2px 0 10px 28px">Macchine con i bracci indipendenti usate un braccio alla volta: scegli "2 lati" e nel menu ⋯ attiva "Separa lato sinistro e destro": il disegno mostra cosa caricare su ogni braccio.</div>`;
     h += opt('none', 'Pacco pesi a perno, cavi, manubri');
     if (!done && q.type !== 'none') h += `<button class="opt" data-act="eqconv" style="margin-top:6px"><span style="width:18px;font-size:18px">${q.conv ? '☑' : '☐'}</span><div><div style="font-weight:600">Finora ho segnato il peso di un lato</div><div class="xs sub">Converte una volta lo storico in totali (es. 27,5 → ${q.type === 'm1' ? '27,5' : fmt(27.5 * 2 + (q.type === 'bar' ? q.bar : 0))}), così record e suggerimenti restano giusti</div></div></button>`;
-    if (done) h += `<div class="xs sub" style="margin:4px 0 10px">Lo storico è già stato convertito in totali.</div>`;
+    if (done) h += `<div class="xs sub" style="margin:4px 0 6px">Lo storico è già stato convertito in totali.</div><button class="opt" data-act="equndo"><span style="width:18px">↩</span><div><div style="font-weight:600">Ho sbagliato: annulla la conversione</div><div class="xs sub">Riporta lo storico ai pesi di prima (non erano di un lato solo)</div></div></button>`;
     h += `<button class="btn" data-act="eqsave" style="margin-top:6px">Salva</button>`;
     sheet(h);
   }
@@ -1576,6 +1592,16 @@
       case 'eqsave': {
         const q = eqDraft; setEquip(q.ex, q); eqDraft = null; closeSheet(); save(); render();
         toast(q.type === 'none' ? 'Nessun disegno per questo esercizio' : (q.conv && meta(q.ex).equip.conv ? 'Storico convertito in pesi totali' : 'Attrezzo salvato'));
+        return true;
+      }
+      case 'equndo': {
+        const exq = eqDraft.ex; const c = plateCfg(exq); const b = bestOf(perfs(keyOfEx(exq)));
+        const back = w => fmt(+((w - c.base) / c.mult).toFixed(2));
+        ask('Annullare la conversione?', 'I pesi registrati tornano com\'erano prima' + (b && b.w ? ' (es. record ' + fmt(b.w) + ' × ' + b.r + ' → ' + back(b.w) + ' × ' + b.r + ')' : '') + '. Poi scegli di nuovo l\'attrezzo giusto.', 'Annulla conversione').then(ok => {
+          if (!ok) { equipSheet(exq); return; }
+          unconvert(exq); save(); render(); eqDraft = null; equipSheet(exq);
+          toast('Storico riportato ai pesi di prima');
+        });
         return true;
       }
       case 'histsheet': histSheet(); return true;
